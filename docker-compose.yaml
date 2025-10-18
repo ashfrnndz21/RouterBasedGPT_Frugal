@@ -1,0 +1,35 @@
+services:
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    ports:
+      - 4000:8080
+    networks:
+      - frugalaigpt-network
+    restart: unless-stopped
+
+  app:
+    image: frugalaigpt/frugalaigpt:main
+    build:
+      context: .
+      dockerfile: app.dockerfile
+    environment:
+      - SEARXNG_API_URL=http://searxng:8080
+      - DATA_DIR=/home/frugalaigpt
+    ports:
+      - 3000:3000
+    networks:
+      - frugalaigpt-network
+    volumes:
+      - backend-dbstore:/home/frugalaigpt/data
+      - uploads:/home/frugalaigpt/uploads
+      - ./config.toml:/home/frugalaigpt/config.toml
+    restart: unless-stopped
+
+networks:
+  frugalaigpt-network:
+
+volumes:
+  backend-dbstore:
+  uploads:
