@@ -133,3 +133,6 @@ By locking to these models, you ensure:
 - ✅ No surprises
 
 **Your app now only uses the models you specified! 🎯**
+
+---
+*Last updated: October 19, 2025*

@@ -135,3 +135,6 @@ SEARXNG = "http://localhost:4000"
 - App will still work with model knowledge
 
 **Your web search is now optimized and reliable! 🚀**
+
+---
+*Last updated: October 19, 2025*

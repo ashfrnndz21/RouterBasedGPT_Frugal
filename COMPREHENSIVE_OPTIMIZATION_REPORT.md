@@ -387,3 +387,6 @@ route(query, history) {
 **Which option do you want?**
 
 I recommend **Option A** for a fast, working demo!
+
+---
+*Last updated: October 19, 2025*

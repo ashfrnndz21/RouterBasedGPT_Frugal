@@ -198,3 +198,6 @@ The **Copilot/Related Questions** feature is a powerful tool that:
 - ✅ Works seamlessly with existing optimization
 
 It's a key differentiator that makes FrugalAIGpt feel more intelligent and helpful compared to basic search engines.
+
+---
+*Last updated: October 19, 2025*

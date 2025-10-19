@@ -473,3 +473,6 @@ FrugalAIGpt is now a **production-ready, cost-optimized AI search engine** with:
 ---
 
 **For questions or support, see the documentation or open an issue on GitHub.**
+
+---
+*Last updated: October 19, 2025*

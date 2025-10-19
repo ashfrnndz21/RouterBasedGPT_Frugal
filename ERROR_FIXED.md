@@ -92,3 +92,6 @@ For a **production demo**, you should:
 - Public instances are unreliable for demos
 
 For a **quick laptop demo**, the current setup should work!
+
+---
+*Last updated: October 19, 2025*

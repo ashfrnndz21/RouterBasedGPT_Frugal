@@ -334,3 +334,6 @@ After starting the app:
 ---
 
 **Happy searching! 🚀**
+
+---
+*Last updated: October 19, 2025*

@@ -210,3 +210,6 @@ If you encounter issues:
 2. Check Ollama: `ollama list`
 3. Verify config: `cat config.toml`
 4. Check browser console for errors
+
+---
+*Last updated: October 19, 2025*

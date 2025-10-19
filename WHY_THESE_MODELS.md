@@ -221,3 +221,6 @@ ollama pull gemma:2b  # Similar size, different strengths
 5. ✅ **Accessible**: Runs on any laptop
 
 This setup demonstrates the frugal RAG concept perfectly while being practical for real-world use.
+
+---
+*Last updated: October 19, 2025*

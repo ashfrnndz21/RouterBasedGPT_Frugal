@@ -190,3 +190,6 @@ ollama pull llama3:8b  # Good balance of speed and quality
 - ✅ Great demo experience
 
 Combined with semantic caching and intelligent routing, it enables 50-70% cost savings while maintaining quality for the queries that matter.
+
+---
+*Last updated: October 19, 2025*

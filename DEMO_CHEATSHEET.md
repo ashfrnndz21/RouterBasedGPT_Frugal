@@ -211,3 +211,6 @@ If something breaks during demo:
 2. Walk through the code architecture
 3. Show the spec documents
 4. Explain the cost calculation manually
+
+---
+*Last updated: October 19, 2025*

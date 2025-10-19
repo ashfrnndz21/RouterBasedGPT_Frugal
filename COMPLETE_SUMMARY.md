@@ -274,3 +274,6 @@ After running queries, you should see:
 - **Demo-ready** - metrics dashboard shows savings in real-time
 
 **Your frugal RAG platform is complete and ready to demo! 🚀**
+
+---
+*Last updated: October 19, 2025*

@@ -177,3 +177,6 @@ With Serper, you now have:
 **Just add your Serper API key and everything works! 🚀**
 
 Get your key now: https://serper.dev/
+
+---
+*Last updated: October 19, 2025*

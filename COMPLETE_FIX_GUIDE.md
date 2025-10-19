@@ -220,3 +220,6 @@ ollama run granite4:micro "test"
 5. ✅ Use queries that work without web search
 
 **Your frugal features work perfectly - just avoid the broken Discover page!** 🚀
+
+---
+*Last updated: October 19, 2025*

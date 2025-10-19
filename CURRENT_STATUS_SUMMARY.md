@@ -141,3 +141,6 @@ Change prompt to use [1] format and post-process:
 2. **Multi-user features** → No authentication or user isolation
 
 The app is **functional and impressive** but needs citation formatting fixes for production quality.
+
+---
+*Last updated: October 19, 2025*

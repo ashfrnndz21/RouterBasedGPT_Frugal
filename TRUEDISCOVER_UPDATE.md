@@ -62,3 +62,6 @@ Both pages feature:
 The Discover feature is now branded as **FrugalDiscover**, creating a unified product family under the FrugalAIGpt brand. The gradient styling ties everything together beautifully!
 
 **Hard refresh your browser (Cmd+Shift+R) to see the "FrugalDiscover" title!** 🎨
+
+---
+*Last updated: October 19, 2025*

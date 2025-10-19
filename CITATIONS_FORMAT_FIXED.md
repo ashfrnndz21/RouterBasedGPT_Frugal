@@ -127,3 +127,6 @@ Without proper citation formatting, the app loses one of its key differentiators
 4. **Click citations** to confirm they link to sources
 
 The citation format is now correct and will work for all new queries! 🔗✨
+
+---
+*Last updated: October 19, 2025*

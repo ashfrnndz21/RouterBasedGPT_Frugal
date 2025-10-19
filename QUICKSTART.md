@@ -111,3 +111,6 @@ ollama pull mistral:7b
 - ✅ Great demo experience
 
 Enjoy your frugal RAG system! 🎉
+
+---
+*Last updated: October 19, 2025*

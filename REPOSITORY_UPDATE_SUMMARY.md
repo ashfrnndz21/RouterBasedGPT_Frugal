@@ -397,3 +397,6 @@ USE_STATEFUL_ORCHESTRATION=false
 ---
 
 **Ready to deploy? Run `./startup.sh` and you're good to go! 🚀**
+
+---
+*Last updated: October 19, 2025*

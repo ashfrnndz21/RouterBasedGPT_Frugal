@@ -168,3 +168,6 @@ You have a **fully functional frugal RAG platform** with:
 **Your app is ready to demo! 🚀**
 
 Just open http://localhost:3000 and start asking questions!
+
+---
+*Last updated: October 19, 2025*

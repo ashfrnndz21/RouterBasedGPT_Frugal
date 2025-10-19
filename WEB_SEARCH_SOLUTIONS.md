@@ -138,3 +138,6 @@ I can create a simple DuckDuckGo adapter that requires no API key.
 ## Let me know which option you prefer!
 
 I recommend **Option A** (quick fix) to get you running NOW, then **Option B** (Docker) for a reliable demo setup.
+
+---
+*Last updated: October 19, 2025*

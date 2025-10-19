@@ -205,3 +205,6 @@ Once you add your API key:
 **Get your API key now: https://serper.dev/**
 
 Then just add it to `config.toml` and restart! 🎉
+
+---
+*Last updated: October 19, 2025*

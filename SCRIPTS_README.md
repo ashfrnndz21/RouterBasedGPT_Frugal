@@ -341,3 +341,6 @@ If scripts don't work:
 ---
 
 **Scripts make your life easier! Use them! 🚀**
+
+---
+*Last updated: October 19, 2025*

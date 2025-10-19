@@ -187,3 +187,6 @@ You now have a **production-ready frugal RAG platform** with:
 **Your app is ready to demo! 🎉**
 
 Open http://localhost:3000 and start searching!
+
+---
+*Last updated: October 19, 2025*

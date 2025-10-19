@@ -126,3 +126,6 @@ If you want to add more features:
 - **Favorites**: Save articles for later
 
 The manual refresh mode gives you full control over your API usage while maintaining a great user experience! 🎉
+
+---
+*Last updated: October 19, 2025*

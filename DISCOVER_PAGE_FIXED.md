@@ -97,3 +97,6 @@ After hard refresh, you should see:
 4. Test switching between different topics
 
 If articles still don't show after hard refresh, check the browser console for JavaScript errors and let me know what you see.
+
+---
+*Last updated: October 19, 2025*

@@ -308,3 +308,6 @@ If you encounter issues:
 ---
 
 **Choose the method that works best for you and get started! 🚀**
+
+---
+*Last updated: October 19, 2025*

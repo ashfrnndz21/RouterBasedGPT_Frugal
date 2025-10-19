@@ -534,3 +534,6 @@ docker compose up -d --build
 ---
 
 **Master the startup scripts for effortless development! 🚀**
+
+---
+*Last updated: October 19, 2025*

@@ -104,3 +104,6 @@ See [STARTUP_GUIDE.md](STARTUP_GUIDE.md) for detailed troubleshooting.
 **That's it! You're ready to go! 🎉**
 
 For more details, see [STARTUP_GUIDE.md](STARTUP_GUIDE.md)
+
+---
+*Last updated: October 19, 2025*

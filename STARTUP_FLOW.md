@@ -369,3 +369,6 @@ Done
 ---
 
 **Understanding the startup flow helps troubleshoot issues faster! 🚀**
+
+---
+*Last updated: October 19, 2025*

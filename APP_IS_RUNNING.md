@@ -119,3 +119,6 @@ Press `Ctrl+C` in the terminal where it's running
 6. Show the cost savings percentage!
 
 **Your frugal RAG system is ready! 🚀**
+
+---
+*Last updated: October 19, 2025*

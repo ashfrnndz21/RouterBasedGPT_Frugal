@@ -213,3 +213,6 @@ Example savings for 1000 queries:
 - [ ] Fine-tuned router model
 - [ ] Redis-backed cache with persistence
 - [ ] Advanced metrics (cost per user, per query type)
+
+---
+*Last updated: October 19, 2025*

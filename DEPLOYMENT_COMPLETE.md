@@ -269,3 +269,6 @@ Updated Files:
 **Repository**: https://github.com/ashfrnndz21/FrugalAI_Gpt_Beta
 
 **Try it now**: `git clone https://github.com/ashfrnndz21/FrugalAI_Gpt_Beta.git && cd FrugalAI_Gpt_Beta && ./startup.sh`
+
+---
+*Last updated: October 19, 2025*

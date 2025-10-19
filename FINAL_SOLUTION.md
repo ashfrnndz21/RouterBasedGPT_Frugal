@@ -169,3 +169,6 @@ Sign up for free API, I'll integrate it.
 → Sign up and give me the API key (5 min).
 
 **Let me know which option you prefer!**
+
+---
+*Last updated: October 19, 2025*

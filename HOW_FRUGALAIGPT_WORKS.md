@@ -732,3 +732,6 @@ Create a tabbed settings page:
 ```
 
 This gives users full control over their FrugalAIGpt experience while maintaining sensible defaults!
+
+---
+*Last updated: October 19, 2025*

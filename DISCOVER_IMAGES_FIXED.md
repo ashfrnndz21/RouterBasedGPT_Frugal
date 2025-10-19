@@ -108,3 +108,6 @@ If Serper doesn't return an image for an article, the code falls back to:
 4. Enjoy your fully functional discover page with real news images! 🎉
 
 If images still don't show after hard refresh, check the browser console (F12 → Console tab) for any JavaScript errors.
+
+---
+*Last updated: October 19, 2025*

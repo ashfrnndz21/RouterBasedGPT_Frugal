@@ -77,3 +77,6 @@ Without frugal system:
 ## Ready to Demo!
 
 Your frugal RAG system is now configured with optimal models for laptop demos.
+
+---
+*Last updated: October 19, 2025*

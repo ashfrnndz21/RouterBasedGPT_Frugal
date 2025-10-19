@@ -260,3 +260,6 @@ Frugal features designed for cost-conscious AI deployments.
 ---
 
 **Ready to save 40-60% on AI costs?** Get started with `QUICKSTART.md`! 🚀
+
+---
+*Last updated: October 19, 2025*

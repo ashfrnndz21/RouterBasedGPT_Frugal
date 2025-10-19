@@ -172,3 +172,6 @@ Your frugal RAG system is working! The key is using **Writing Assistant mode** w
 ✅ Cost savings
 
 All without needing SearxNG! 🎉
+
+---
+*Last updated: October 19, 2025*

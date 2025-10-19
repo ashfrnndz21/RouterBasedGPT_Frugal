@@ -169,3 +169,6 @@ This matches the expected Perplexity-style layout!
 5. Click "Search videos" for YouTube results
 
 The image and video search features are now fully functional with Serper! 🎨🎥
+
+---
+*Last updated: October 19, 2025*

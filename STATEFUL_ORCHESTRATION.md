@@ -254,3 +254,6 @@ console.log({
 - Entity Extractor: `src/lib/context/entityExtractor.ts`
 - Conversation Summarizer: `src/lib/context/conversationSummarizer.ts`
 - Stateful Orchestrator: `src/lib/orchestration/statefulOrchestrator.ts`
+
+---
+*Last updated: October 19, 2025*
