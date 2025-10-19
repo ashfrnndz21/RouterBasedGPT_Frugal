@@ -17,6 +17,8 @@ import {
   getCustomOpenaiModelName,
 } from '@/lib/config';
 import { searchHandlers } from '@/lib/search';
+import { prependLanguageInstruction } from '@/lib/prompts';
+import { StatefulOrchestrator } from '@/lib/orchestration/statefulOrchestrator';
 import { z } from 'zod';
 
 export const runtime = 'nodejs';
@@ -60,6 +62,7 @@ const bodySchema = z.object({
   chatModel: chatModelSchema.optional().default({}),
   embeddingModel: embeddingModelSchema.optional().default({}),
   systemInstructions: z.string().nullable().optional().default(''),
+  language: z.string().optional().default('en'),
 });
 
 type Message = z.infer<typeof messageSchema>;
@@ -93,6 +96,9 @@ const handleEmitterEvents = async (
   let recievedMessage = '';
   const aiMessageId = crypto.randomBytes(7).toString('hex');
 
+  const startTime = Date.now();
+  let sourcesReceived = false;
+
   stream.on('data', (data) => {
     const parsedData = JSON.parse(data);
     if (parsedData.type === 'response') {
@@ -108,6 +114,7 @@ const handleEmitterEvents = async (
 
       recievedMessage += parsedData.data;
     } else if (parsedData.type === 'sources') {
+      sourcesReceived = true;
       writer.write(
         encoder.encode(
           JSON.stringify({
@@ -132,10 +139,23 @@ const handleEmitterEvents = async (
     }
   });
   stream.on('end', () => {
+    const endTime = Date.now();
+    const latencyMs = endTime - startTime;
+    
+    // Calculate basic metadata
+    const metadata = {
+      modelTier: 'tier1' as const, // Basic handler uses tier1
+      routingPath: sourcesReceived ? 'rag-tier1' as const : 'canned' as const,
+      estimatedCost: sourcesReceived ? 0.0008 : 0.0003, // Rough estimates
+      latencyMs: latencyMs,
+      cacheHit: false,
+    };
+
     writer.write(
       encoder.encode(
         JSON.stringify({
           type: 'messageEnd',
+          metadata: metadata,
         }) + '\n',
       ),
     );
@@ -324,15 +344,44 @@ export const POST = async (req: Request) => {
       );
     }
 
-    const stream = await handler.searchAndAnswer(
-      message.content,
-      history,
-      llm,
-      embedding,
-      body.optimizationMode,
-      body.files,
+    // Prepend language-specific system prompt to existing instructions
+    console.log('[Multilingual] Language received:', body.language);
+    const systemInstructionsWithLanguage = prependLanguageInstruction(
+      body.language,
       body.systemInstructions as string,
     );
+    console.log('[Multilingual] System instructions:', systemInstructionsWithLanguage);
+
+    // Use stateful orchestrator for advanced context management
+    const useStatefulOrchestration = false; // Temporarily disabled - streaming issue
+    
+    let stream: any;
+    
+    if (useStatefulOrchestration) {
+      console.log('[Chat] Using stateful orchestration');
+      const orchestrator = new StatefulOrchestrator(handler, embedding);
+      stream = await orchestrator.handleQuery(
+        message.content,
+        message.chatId,
+        history,
+        llm,
+        embedding,
+        body.optimizationMode,
+        body.files,
+        systemInstructionsWithLanguage,
+      );
+    } else {
+      console.log('[Chat] Using basic search handler');
+      stream = await handler.searchAndAnswer(
+        message.content,
+        history,
+        llm,
+        embedding,
+        body.optimizationMode,
+        body.files,
+        systemInstructionsWithLanguage,
+      );
+    }
 
     const responseStream = new TransformStream();
     const writer = responseStream.writable.getWriter();

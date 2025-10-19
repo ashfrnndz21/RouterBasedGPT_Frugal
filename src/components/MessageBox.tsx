@@ -22,6 +22,8 @@ import ThinkBox from './ThinkBox';
 import { useChat, Section } from '@/lib/hooks/useChat';
 import Citation from './Citation';
 import { preferenceManager } from '@/lib/preferences/preferenceManager';
+import ResponseBadges from './ResponseBadges';
+import CitationReferences from './CitationReferences';
 
 const ThinkTagProcessor = ({
   children,
@@ -126,6 +128,9 @@ const MessageBox = ({
                   {parsedMessage}
                 </Markdown>
 
+                {/* Response Badges */}
+                <ResponseBadges metadata={section.metadata} />
+
                 {loading && isLast ? null : (
                   <div className="flex flex-row items-center justify-between w-full text-black dark:text-white py-4 -mx-2">
                     <div className="flex flex-row items-center space-x-1">
@@ -158,6 +163,15 @@ const MessageBox = ({
                     </div>
                   </div>
                 )}
+
+                {/* Citation References */}
+                {section.sourceMessage &&
+                  section.sourceMessage.sources &&
+                  section.sourceMessage.sources.length > 0 && (
+                    <CitationReferences
+                      sources={section.sourceMessage.sources}
+                    />
+                  )}
 
                 {isLast &&
                   section.suggestions &&

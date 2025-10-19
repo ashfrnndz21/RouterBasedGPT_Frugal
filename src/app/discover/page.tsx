@@ -25,17 +25,23 @@ const Page = () => {
   const [isOnboarding, setIsOnboarding] = useState(false);
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [allTopicsMode, setAllTopicsMode] = useState(false);
+  const [customTopics, setCustomTopics] = useState<Array<{ id: string; name: string; keywords: string[] }>>([]);
+  const [showAddCustomTopic, setShowAddCustomTopic] = useState(false);
+  const [customTopicName, setCustomTopicName] = useState('');
+  const [customTopicKeywords, setCustomTopicKeywords] = useState('');
 
   // Load user interests on mount
   useEffect(() => {
     const interests = preferenceManager.getInterests();
     const allTopics = preferenceManager.isAllTopicsMode();
+    const custom = preferenceManager.getCustomTopics();
     
     setUserInterests(interests);
     setAllTopicsMode(allTopics);
+    setCustomTopics(custom);
 
-    // Check if this is first-time user (no interests set and not in all topics mode)
-    if (interests.length === 0 && !allTopics) {
+    // Check if this is first-time user (no interests set and not in all topics mode and no custom topics)
+    if (interests.length === 0 && !allTopics && custom.length === 0) {
       setIsOnboarding(true);
       setShowInterestSelector(true);
     } else {
@@ -51,10 +57,10 @@ const Page = () => {
         setActiveTopic('tech');
       }
       
-      // Fetch articles on initial load
+      // Fetch articles on initial load (including custom topics)
       if (allTopics) {
         fetchArticles('all');
-      } else if (interests.length > 0) {
+      } else if (interests.length > 0 || custom.length > 0) {
         fetchArticles(initialTopic, interests);
       } else {
         fetchArticles(initialTopic);
@@ -68,17 +74,42 @@ const Page = () => {
       // Build query params
       const params = new URLSearchParams();
       
-      if (allTopicsMode || topic === 'all') {
+      // Check if the topic is a custom topic ID
+      const isCustomTopic = customTopics.some(ct => ct.id === topic);
+      
+      if (isCustomTopic) {
+        // Fetch ONLY this custom topic - don't send any other parameters
+        const selectedCustomTopic = customTopics.find(ct => ct.id === topic);
+        if (selectedCustomTopic) {
+          params.append('customTopics', encodeURIComponent(JSON.stringify([selectedCustomTopic])));
+          console.log('[Discover] Fetching ONLY custom topic:', selectedCustomTopic.name, 'Keywords:', selectedCustomTopic.keywords);
+        }
+        // Don't add topic, categories, or allTopics params - we want ONLY this custom topic
+      } else if (allTopicsMode || topic === 'all') {
         // Fetch from all categories
         params.append('topic', 'tech'); // Use tech as base, but we'll enhance this
         params.append('allTopics', 'true');
+        // Include all custom topics when in all topics mode
+        if (customTopics.length > 0) {
+          params.append('customTopics', encodeURIComponent(JSON.stringify(customTopics)));
+        }
       } else if (categories && categories.length > 0) {
         // Use multiple categories
         params.append('categories', categories.join(','));
+        // Include all custom topics with regular categories
+        if (customTopics.length > 0) {
+          params.append('customTopics', encodeURIComponent(JSON.stringify(customTopics)));
+        }
       } else {
         // Single topic
         params.append('topic', topic);
+        // Include all custom topics with single topic
+        if (customTopics.length > 0) {
+          params.append('customTopics', encodeURIComponent(JSON.stringify(customTopics)));
+        }
       }
+
+      console.log('[Discover] API URL:', `/api/discover?${params.toString()}`);
 
       const res = await fetch(`/api/discover?${params.toString()}`, {
         method: 'GET',
@@ -124,7 +155,9 @@ const Page = () => {
   const handleInterestsSaved = (categories: string[]) => {
     setUserInterests(categories);
     const allTopics = preferenceManager.isAllTopicsMode();
+    const custom = preferenceManager.getCustomTopics();
     setAllTopicsMode(allTopics);
+    setCustomTopics(custom);
     
     // Update active topic
     if (allTopics) {
@@ -140,6 +173,56 @@ const Page = () => {
       fetchArticles('all');
     } else if (categories.length > 0) {
       fetchArticles(categories[0], categories);
+    }
+  };
+
+  const handleAddCustomTopic = () => {
+    if (!customTopicName.trim() || !customTopicKeywords.trim()) {
+      toast.error('Please enter both topic name and keywords');
+      return;
+    }
+
+    const keywords = customTopicKeywords.split(',').map(k => k.trim()).filter(Boolean);
+    if (keywords.length === 0) {
+      toast.error('Please enter at least one keyword');
+      return;
+    }
+
+    const success = preferenceManager.addCustomTopic(customTopicName.trim(), keywords);
+    if (success) {
+      const updated = preferenceManager.getCustomTopics();
+      setCustomTopics(updated);
+      setCustomTopicName('');
+      setCustomTopicKeywords('');
+      setShowAddCustomTopic(false);
+      toast.success(`Custom topic "${customTopicName}" added!`);
+      
+      // Automatically fetch articles with the new custom topic
+      if (allTopicsMode) {
+        fetchArticles('all');
+      } else if (userInterests.length > 0) {
+        fetchArticles(activeTopic, userInterests);
+      } else {
+        fetchArticles(activeTopic);
+      }
+    } else {
+      toast.error('Maximum 2 custom topics allowed');
+    }
+  };
+
+  const handleRemoveCustomTopic = (id: string) => {
+    preferenceManager.removeCustomTopic(id);
+    const updated = preferenceManager.getCustomTopics();
+    setCustomTopics(updated);
+    toast.success('Custom topic removed');
+    
+    // Refresh articles after removing custom topic
+    if (allTopicsMode) {
+      fetchArticles('all');
+    } else if (userInterests.length > 0) {
+      fetchArticles(activeTopic, userInterests);
+    } else {
+      fetchArticles(activeTopic);
     }
   };
 
@@ -175,6 +258,78 @@ const Page = () => {
         onSave={handleInterestsSaved}
         isOnboarding={isOnboarding}
       />
+
+      {/* Add Custom Topic Modal */}
+      {showAddCustomTopic && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-dark-primary rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold truegpt-gradient-text">Add Custom Topic</h2>
+              <button
+                onClick={() => {
+                  setShowAddCustomTopic(false);
+                  setCustomTopicName('');
+                  setCustomTopicKeywords('');
+                }}
+                className="text-black/60 dark:text-white/60 hover:text-black dark:hover:text-white"
+              >
+                ×
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2 text-black/70 dark:text-white/70">
+                  Topic Name
+                </label>
+                <input
+                  type="text"
+                  value={customTopicName}
+                  onChange={(e) => setCustomTopicName(e.target.value)}
+                  placeholder="e.g., Space Exploration"
+                  className="w-full px-4 py-2 rounded-lg border border-black/20 dark:border-white/20 bg-white dark:bg-dark-secondary text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  maxLength={30}
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium mb-2 text-black/70 dark:text-white/70">
+                  Keywords (comma-separated)
+                </label>
+                <input
+                  type="text"
+                  value={customTopicKeywords}
+                  onChange={(e) => setCustomTopicKeywords(e.target.value)}
+                  placeholder="e.g., NASA, SpaceX, Mars, rockets"
+                  className="w-full px-4 py-2 rounded-lg border border-black/20 dark:border-white/20 bg-white dark:bg-dark-secondary text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+                <p className="text-xs text-black/50 dark:text-white/50 mt-1">
+                  Enter 3-5 keywords that describe your topic
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => {
+                  setShowAddCustomTopic(false);
+                  setCustomTopicName('');
+                  setCustomTopicKeywords('');
+                }}
+                className="flex-1 px-4 py-2 rounded-lg border border-black/20 dark:border-white/20 text-black/70 dark:text-white/70 hover:bg-black/5 dark:hover:bg-white/5 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddCustomTopic}
+                className="flex-1 px-4 py-2 rounded-lg truegpt-gradient text-white hover:opacity-90 transition shadow-lg"
+              >
+                Add Topic
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
       <div>
         <div className="flex flex-col pt-10 border-b border-light-200/20 dark:border-dark-200/20 pb-6 px-2">
@@ -221,6 +376,47 @@ const Page = () => {
                   </button>
                 );
               })}
+
+              {/* Custom Topics */}
+              {customTopics.map((topic) => (
+                <button
+                  key={topic.id}
+                  className={cn(
+                    'border-[0.1px] rounded-full text-sm px-3 py-1 text-nowrap transition duration-200 cursor-pointer flex items-center gap-2',
+                    activeTopic === topic.id && !allTopicsMode
+                      ? 'truegpt-gradient text-white shadow-md'
+                      : allTopicsMode
+                      ? 'border-purple-300 dark:border-purple-700 text-purple-500/50 dark:text-purple-400/50 bg-purple-50/50 dark:bg-purple-900/10'
+                      : 'border-purple-400 dark:border-purple-600 text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 dark:hover:bg-purple-900/30',
+                  )}
+                  onClick={() => !allTopicsMode && handleTopicClick(topic.id)}
+                  disabled={allTopicsMode}
+                >
+                  <span>{topic.name}</span>
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemoveCustomTopic(topic.id);
+                    }}
+                    className="hover:text-red-600 dark:hover:text-red-400 cursor-pointer"
+                    title="Remove custom topic"
+                  >
+                    ×
+                  </span>
+                </button>
+              ))}
+
+              {/* Add Custom Topic Button */}
+              {customTopics.length < 2 && (
+                <button
+                  onClick={() => setShowAddCustomTopic(true)}
+                  className="border-[0.1px] rounded-full text-sm px-3 py-1 text-nowrap transition duration-200 cursor-pointer border-dashed border-black/30 dark:border-white/30 text-black/70 dark:text-white/70 hover:text-black dark:hover:text-white hover:border-black/40 dark:hover:border-white/40 hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-1.5"
+                  title="Add custom topic"
+                >
+                  <span className="text-lg leading-none">+</span>
+                  <span>Add Topic</span>
+                </button>
+              )}
 
               {/* Settings Button */}
               <button

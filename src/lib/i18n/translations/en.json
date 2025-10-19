@@ -1,0 +1,35 @@
+{
+  "common": {
+    "search": "Search",
+    "settings": "Settings",
+    "loading": "Loading...",
+    "error": "Error",
+    "send": "Send",
+    "clear": "Clear",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close"
+  },
+  "chat": {
+    "placeholder": "Ask anything...",
+    "send": "Send",
+    "clear": "Clear chat",
+    "newChat": "New chat",
+    "emptyState": "Start a conversation"
+  },
+  "nav": {
+    "home": "Home",
+    "discover": "Discover",
+    "library": "Library",
+    "analytics": "Analytics",
+    "settings": "Settings"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "theme": "Theme",
+    "preferences": "Preferences"
+  }
+}

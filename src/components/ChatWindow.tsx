@@ -8,6 +8,7 @@ import { Settings } from 'lucide-react';
 import Link from 'next/link';
 import NextError from 'next/error';
 import { useChat } from '@/lib/hooks/useChat';
+import CostDashboard from './CostDashboard';
 
 export interface BaseMessage {
   chatId: string;
@@ -15,10 +16,22 @@ export interface BaseMessage {
   createdAt: Date;
 }
 
+export interface ResponseMetadata {
+  cacheHit?: boolean;
+  modelTier?: 'tier1' | 'tier2';
+  routingPath?: 'canned' | 'cache' | 'rag-tier1' | 'rag-tier2';
+  entitiesTracked?: number;
+  summarizationTriggered?: boolean;
+  tokensSaved?: number;
+  estimatedCost?: number;
+  latencyMs?: number;
+}
+
 export interface AssistantMessage extends BaseMessage {
   role: 'assistant';
   content: string;
   suggestions?: string[];
+  metadata?: ResponseMetadata;
 }
 
 export interface UserMessage extends BaseMessage {
@@ -77,6 +90,7 @@ const ChatWindow = () => {
           <>
             <Navbar />
             <Chat />
+            <CostDashboard />
           </>
         ) : (
           <EmptyChat />

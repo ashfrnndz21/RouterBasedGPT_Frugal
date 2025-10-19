@@ -1,0 +1,35 @@
+{
+  "common": {
+    "search": "Cari",
+    "settings": "Pengaturan",
+    "loading": "Memuat...",
+    "error": "Kesalahan",
+    "send": "Kirim",
+    "clear": "Hapus",
+    "save": "Simpan",
+    "cancel": "Batal",
+    "delete": "Hapus",
+    "edit": "Edit",
+    "close": "Tutup"
+  },
+  "chat": {
+    "placeholder": "Tanyakan apa saja...",
+    "send": "Kirim",
+    "clear": "Hapus percakapan",
+    "newChat": "Percakapan baru",
+    "emptyState": "Mulai percakapan"
+  },
+  "nav": {
+    "home": "Beranda",
+    "discover": "Jelajahi",
+    "library": "Perpustakaan",
+    "analytics": "Analitik",
+    "settings": "Pengaturan"
+  },
+  "settings": {
+    "title": "Pengaturan",
+    "language": "Bahasa",
+    "theme": "Tema",
+    "preferences": "Preferensi"
+  }
+}

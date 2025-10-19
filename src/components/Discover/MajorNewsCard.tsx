@@ -1,5 +1,6 @@
 import { Discover } from '@/app/discover/page';
 import Link from 'next/link';
+import { useState } from 'react';
 
 const MajorNewsCard = ({
   item,
@@ -8,6 +9,8 @@ const MajorNewsCard = ({
   item: Discover;
   isLeft?: boolean;
 }) => {
+  const [imageError, setImageError] = useState(false);
+  
   // Safely handle thumbnail URL
   let thumbnailSrc = item.thumbnail;
   try {
@@ -19,6 +22,10 @@ const MajorNewsCard = ({
   } catch (e) {
     // Use thumbnail as-is if URL parsing fails
   }
+  
+  // Fallback image if thumbnail fails to load
+  const fallbackImage = `https://via.placeholder.com/800x600/1e293b/64748b?text=${encodeURIComponent('AI News')}`;
+  const displayImage = imageError ? fallbackImage : thumbnailSrc;
 
   return (
     <Link
@@ -28,11 +35,13 @@ const MajorNewsCard = ({
     >
       {isLeft ? (
         <>
-          <div className="relative w-80 h-full overflow-hidden rounded-2xl flex-shrink-0">
+          <div className="relative w-80 h-full overflow-hidden rounded-2xl flex-shrink-0 bg-gradient-to-br from-purple-500/10 to-cyan-500/10">
             <img
               className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-500"
-              src={thumbnailSrc}
+              src={displayImage}
               alt={item.title}
+              onError={() => setImageError(true)}
+              loading="lazy"
             />
           </div>
           <div className="flex flex-col justify-center flex-1 py-4">
@@ -60,11 +69,13 @@ const MajorNewsCard = ({
               {item.content}
             </p>
           </div>
-          <div className="relative w-80 h-full overflow-hidden rounded-2xl flex-shrink-0">
+          <div className="relative w-80 h-full overflow-hidden rounded-2xl flex-shrink-0 bg-gradient-to-br from-purple-500/10 to-cyan-500/10">
             <img
               className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-500"
-              src={thumbnailSrc}
+              src={displayImage}
               alt={item.title}
+              onError={() => setImageError(true)}
+              loading="lazy"
             />
           </div>
         </>

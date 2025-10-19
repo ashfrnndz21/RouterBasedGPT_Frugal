@@ -195,6 +195,98 @@ class PreferenceManager {
   }
 
   /**
+   * Get custom topics (user-defined news themes)
+   */
+  public getCustomTopics(): Array<{ id: string; name: string; keywords: string[] }> {
+    const prefs = this.readFromStorage<PreferencesData>(
+      STORAGE_KEYS.PREFERENCES,
+      {
+        version: STORAGE_VERSION,
+        interests: { categories: [], allTopicsMode: false },
+        searchPreferences: {
+          defaultMode: 'all',
+          enabledSources: {
+            images: true,
+            videos: true,
+            academic: true,
+            reddit: true,
+            wolframAlpha: true,
+          },
+          resultsDensity: 'standard',
+        },
+      }
+    );
+    return (prefs.interests as any).customTopics || [];
+  }
+
+  /**
+   * Add a custom topic (max 2 allowed)
+   */
+  public addCustomTopic(name: string, keywords: string[]): boolean {
+    const prefs = this.readFromStorage<PreferencesData>(
+      STORAGE_KEYS.PREFERENCES,
+      {
+        version: STORAGE_VERSION,
+        interests: { categories: [], allTopicsMode: false },
+        searchPreferences: {
+          defaultMode: 'all',
+          enabledSources: {
+            images: true,
+            videos: true,
+            academic: true,
+            reddit: true,
+            wolframAlpha: true,
+          },
+          resultsDensity: 'standard',
+        },
+      }
+    );
+    
+    const customTopics = (prefs.interests as any).customTopics || [];
+    
+    // Limit to 2 custom topics
+    if (customTopics.length >= 2) {
+      return false;
+    }
+    
+    const id = `custom_${Date.now()}`;
+    customTopics.push({ id, name, keywords });
+    (prefs.interests as any).customTopics = customTopics;
+    
+    this.writeToStorage(STORAGE_KEYS.PREFERENCES, prefs);
+    return true;
+  }
+
+  /**
+   * Remove a custom topic
+   */
+  public removeCustomTopic(id: string): void {
+    const prefs = this.readFromStorage<PreferencesData>(
+      STORAGE_KEYS.PREFERENCES,
+      {
+        version: STORAGE_VERSION,
+        interests: { categories: [], allTopicsMode: false },
+        searchPreferences: {
+          defaultMode: 'all',
+          enabledSources: {
+            images: true,
+            videos: true,
+            academic: true,
+            reddit: true,
+            wolframAlpha: true,
+          },
+          resultsDensity: 'standard',
+        },
+      }
+    );
+    
+    const customTopics = (prefs.interests as any).customTopics || [];
+    (prefs.interests as any).customTopics = customTopics.filter((t: any) => t.id !== id);
+    
+    this.writeToStorage(STORAGE_KEYS.PREFERENCES, prefs);
+  }
+
+  /**
    * Set user's interest categories
    */
   public setInterests(categories: string[]): void {

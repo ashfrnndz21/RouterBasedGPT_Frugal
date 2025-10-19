@@ -173,7 +173,7 @@ export default function InterestSelector({
             {INTEREST_CATEGORIES.map((category) => {
               const isSelected = selectedCategories.includes(category.id);
               const colors = getCategoryColorClasses(category.color);
-              const IconComponent = (LucideIcons as any)[category.icon] || LucideIcons.Circle;
+              const IconComponent = (LucideIcons as any)[category.icon] || (() => null);
 
               return (
                 <button

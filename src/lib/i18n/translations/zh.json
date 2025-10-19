@@ -1,0 +1,35 @@
+{
+  "common": {
+    "search": "搜索",
+    "settings": "设置",
+    "loading": "加载中...",
+    "error": "错误",
+    "send": "发送",
+    "clear": "清除",
+    "save": "保存",
+    "cancel": "取消",
+    "delete": "删除",
+    "edit": "编辑",
+    "close": "关闭"
+  },
+  "chat": {
+    "placeholder": "问我任何问题...",
+    "send": "发送",
+    "clear": "清除对话",
+    "newChat": "新对话",
+    "emptyState": "开始对话"
+  },
+  "nav": {
+    "home": "首页",
+    "discover": "发现",
+    "library": "资料库",
+    "analytics": "分析",
+    "settings": "设置"
+  },
+  "settings": {
+    "title": "设置",
+    "language": "语言",
+    "theme": "主题",
+    "preferences": "偏好设置"
+  }
+}

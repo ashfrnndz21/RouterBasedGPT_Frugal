@@ -424,7 +424,7 @@ export default function HistorySidebar({
                 Delete Conversation?
               </h3>
               <p className="text-sm text-black/70 dark:text-white/70 mb-2">
-                Are you sure you want to delete "{deleteConfirm.title}"?
+                Are you sure you want to delete &quot;{deleteConfirm.title}&quot;?
               </p>
               <p className="text-xs text-black/50 dark:text-white/50">
                 This action cannot be undone.

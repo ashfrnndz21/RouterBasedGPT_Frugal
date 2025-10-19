@@ -12,6 +12,7 @@ import {
 import jsPDF from 'jspdf';
 import { useChat, Section } from '@/lib/hooks/useChat';
 import HistorySidebar from './History/HistorySidebar';
+import LanguageSelector from './LanguageSelector';
 
 const downloadFile = (filename: string, content: string, type: string) => {
   const blob = new Blob([content], { type });
@@ -260,6 +261,7 @@ const Navbar = () => {
             </div>
 
             <div className="flex items-center gap-1 min-w-0">
+              <LanguageSelector />
               <button
                 onClick={() => setShowHistory(true)}
                 className="p-2 rounded-lg hover:bg-light-secondary dark:hover:bg-dark-secondary transition-colors duration-200"

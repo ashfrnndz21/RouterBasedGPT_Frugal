@@ -23,6 +23,7 @@ import { getSuggestions } from '../actions';
 import { preferenceManager } from '@/lib/preferences';
 import type { SearchSession } from '@/lib/preferences/types';
 import { getAnalyticsTracker } from '@/lib/analytics/analyticsTracker';
+import { useLanguage } from '@/lib/contexts/LanguageContext';
 
 export type Section = {
   userMessage: UserMessage;
@@ -32,6 +33,7 @@ export type Section = {
   sourceMessage: SourceMessage | undefined;
   thinkingEnded: boolean;
   suggestions?: string[];
+  metadata?: import('@/components/ChatWindow').ResponseMetadata;
 };
 
 type ChatContext = {
@@ -337,6 +339,7 @@ export const ChatProvider = ({
 }) => {
   const searchParams = useSearchParams();
   const initialMessage = searchParams.get('q');
+  const { language } = useLanguage();
 
   const [chatId, setChatId] = useState<string | undefined>(id);
   const [newChatCreated, setNewChatCreated] = useState(false);
@@ -454,6 +457,7 @@ export const ChatProvider = ({
   };
 
   const sections = useMemo<Section[]>(() => {
+    console.log('[useChat] Creating sections from messages:', messages.length);
     const sections: Section[] = [];
 
     messages.forEach((msg, i) => {
@@ -506,6 +510,8 @@ export const ChatProvider = ({
             sourceMessage.sources &&
             sourceMessage.sources.length > 0
           ) {
+            console.log('[useChat] Processing citations, sources:', sourceMessage.sources.length);
+            console.log('[useChat] Original message:', processedMessage.substring(0, 200));
             processedMessage = processedMessage.replace(
               citationRegex,
               (_, capturedContent: string) => {
@@ -525,6 +531,7 @@ export const ChatProvider = ({
                     const url = source?.metadata?.url;
 
                     if (url) {
+                      console.log('[useChat] Converting citation', numStr, 'to link:', url);
                       return `<citation href="${url}">${numStr}</citation>`;
                     } else {
                       return ``;
@@ -535,6 +542,7 @@ export const ChatProvider = ({
                 return linksHtml;
               },
             );
+            console.log('[useChat] Processed message:', processedMessage.substring(0, 200));
             speechMessage = aiMessage.content.replace(regex, '');
           } else {
             processedMessage = processedMessage.replace(regex, '');
@@ -553,7 +561,7 @@ export const ChatProvider = ({
           }
         }
 
-        sections.push({
+        const section = {
           userMessage: msg,
           assistantMessage: aiMessage,
           sourceMessage: sourceMessage,
@@ -561,10 +569,18 @@ export const ChatProvider = ({
           speechMessage,
           thinkingEnded,
           suggestions: suggestions,
+          metadata: aiMessage?.metadata,
+        };
+        console.log('[useChat] Created section:', {
+          hasUser: !!section.userMessage,
+          hasAssistant: !!section.assistantMessage,
+          contentLength: section.parsedAssistantMessage?.length || 0,
         });
+        sections.push(section);
       }
     });
 
+    console.log('[useChat] Total sections created:', sections.length);
     return sections;
   }, [messages]);
 
@@ -728,6 +744,7 @@ export const ChatProvider = ({
       }
 
       if (data.type === 'sources') {
+        console.log('[useChat] Received sources:', data.data.length, 'sources');
         setMessages((prevMessages) => [
           ...prevMessages,
           {
@@ -744,7 +761,9 @@ export const ChatProvider = ({
       }
 
       if (data.type === 'message') {
+        console.log('[useChat] Received message chunk:', data.data);
         if (!added) {
+          console.log('[useChat] Adding first message chunk');
           setMessages((prevMessages) => [
             ...prevMessages,
             {
@@ -753,18 +772,24 @@ export const ChatProvider = ({
               chatId: chatId!,
               role: 'assistant',
               createdAt: new Date(),
+              metadata: data.metadata, // Capture metadata
             },
           ]);
           added = true;
           setMessageAppeared(true);
         } else {
+          console.log('[useChat] Appending message chunk');
           setMessages((prev) =>
             prev.map((message) => {
               if (
                 message.messageId === data.messageId &&
                 message.role === 'assistant'
               ) {
-                return { ...message, content: message.content + data.data };
+                return { 
+                  ...message, 
+                  content: message.content + data.data,
+                  metadata: data.metadata || message.metadata, // Update metadata
+                };
               }
 
               return message;
@@ -775,6 +800,26 @@ export const ChatProvider = ({
       }
 
       if (data.type === 'messageEnd') {
+        console.log('[useChat] Message end, metadata:', data.metadata);
+        
+        // Update the last assistant message with final metadata
+        if (data.metadata) {
+          setMessages((prev) =>
+            prev.map((message, index) => {
+              if (
+                index === prev.length - 1 &&
+                message.role === 'assistant'
+              ) {
+                return { 
+                  ...message, 
+                  metadata: data.metadata,
+                };
+              }
+              return message;
+            }),
+          );
+        }
+
         setChatHistory((prevHistory) => [
           ...prevHistory,
           ['human', message],
@@ -819,7 +864,9 @@ export const ChatProvider = ({
           sourceMessage.sources.length > 0 &&
           suggestionMessageIndex == -1
         ) {
+          console.log('[useChat] Fetching suggestions...');
           const suggestions = await getSuggestions(messagesRef.current);
+          console.log('[useChat] Received suggestions:', suggestions);
           setMessages((prev) => {
             return [
               ...prev,
@@ -837,6 +884,8 @@ export const ChatProvider = ({
     };
 
     const messageIndex = messages.findIndex((m) => m.messageId === messageId);
+
+    console.log('[Multilingual] Sending message with language:', language);
 
     const res = await fetch('/api/chat', {
       method: 'POST',
@@ -866,6 +915,7 @@ export const ChatProvider = ({
           provider: embeddingModelProvider.provider,
         },
         systemInstructions: localStorage.getItem('systemInstructions'),
+        language: language,
       }),
     });
 
@@ -878,20 +928,25 @@ export const ChatProvider = ({
 
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {
+        console.log('[useChat] Stream ended');
+        break;
+      }
 
       partialChunk += decoder.decode(value, { stream: true });
+      console.log('[useChat] Received chunk, partialChunk length:', partialChunk.length);
 
       try {
         const messages = partialChunk.split('\n');
         for (const msg of messages) {
           if (!msg.trim()) continue;
+          console.log('[useChat] Parsing message:', msg.substring(0, 100));
           const json = JSON.parse(msg);
           messageHandler(json);
         }
         partialChunk = '';
       } catch (error) {
-        console.warn('Incomplete JSON, waiting for next chunk...');
+        console.warn('Incomplete JSON, waiting for next chunk...', error);
       }
     }
   };

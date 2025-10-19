@@ -53,11 +53,30 @@ export const GET = async (req: Request) => {
     const topic: Topic = (params.get('topic') as Topic) || 'tech';
     const allTopics = params.get('allTopics') === 'true';
     const categoriesParam = params.get('categories');
+    const customTopicsParam = params.get('customTopics');
 
     // Handle multiple categories or all topics mode
     let categoriesToSearch: string[] = [];
+    let customTopics: Array<{ id: string; name: string; keywords: string[] }> = [];
     
-    if (allTopics) {
+    // Parse custom topics if provided
+    if (customTopicsParam) {
+      try {
+        customTopics = JSON.parse(decodeURIComponent(customTopicsParam));
+        console.log('[Discover API] Received custom topics:', customTopics);
+      } catch (e) {
+        console.error('[Discover] Failed to parse custom topics:', e);
+      }
+    }
+    
+    // Check if we're fetching ONLY custom topics (no regular categories)
+    const onlyCustomTopics = customTopics.length > 0 && !categoriesParam && !allTopics && !params.get('topic');
+    
+    if (onlyCustomTopics) {
+      // Don't search regular categories, only custom topics
+      categoriesToSearch = [];
+      console.log('[Discover API] Fetching ONLY custom topics, no regular categories');
+    } else if (allTopics) {
       // Fetch from all available categories
       categoriesToSearch = INTEREST_CATEGORIES.map(cat => cat.id);
     } else if (categoriesParam) {
@@ -71,9 +90,12 @@ export const GET = async (req: Request) => {
         // Fallback to single topic for backward compatibility
         categoriesToSearch = [topic];
       }
-    } else {
-      // Single topic for backward compatibility
+    } else if (customTopics.length === 0) {
+      // Only use default topic if no custom topics provided
       categoriesToSearch = [topic];
+    } else {
+      // Has custom topics but no specific category request
+      categoriesToSearch = [];
     }
 
     const serperApiKey = getSerperApiKey();
@@ -92,6 +114,40 @@ export const GET = async (req: Request) => {
     if (mode === 'normal') {
       // Use Serper for fast, reliable news search
       const seenUrls = new Set();
+      
+      // Build search queries for custom topics
+      const customTopicPromises = customTopics.map(async (customTopic) => {
+        const queries = customTopic.keywords.slice(0, 2).map(keyword => `${keyword} news`);
+        console.log('[Discover API] Searching custom topic:', customTopic.name, 'with queries:', queries);
+        
+        const results = await Promise.all(queries.map(async (query) => {
+          const newsResults = await searchSerper(query, {
+            apiKey: serperApiKey,
+            type: 'news',
+            num: 10,
+          });
+          
+          const imageResults = await searchSerper(query, {
+            apiKey: serperApiKey,
+            type: 'images',
+            num: 5,
+          });
+          
+          const resultsWithImages = newsResults.results.map((article, index) => ({
+            ...article,
+            thumbnailUrl: imageResults.results[index]?.url || article.imageUrl || '',
+            category: customTopic.id,
+            categoryName: customTopic.name,
+          }));
+          
+          return {
+            ...newsResults,
+            results: resultsWithImages,
+          };
+        }));
+        
+        return results;
+      });
       
       // Build search queries using category keywords
       const allSearchPromises = categoriesToSearch.flatMap((categoryId) => {
@@ -117,12 +173,12 @@ export const GET = async (req: Request) => {
             const imageResults = await searchSerper(query, {
               apiKey: serperApiKey,
               type: 'images',
-              num: 5,
+              num: 10,
             });
             
             const resultsWithImages = newsResults.results.map((article, index) => ({
               ...article,
-              thumbnailUrl: imageResults.results[index]?.url || article.imageUrl || '',
+              thumbnailUrl: imageResults.results[index]?.imageUrl || article.imageUrl || '',
               category: categoryId,
             }));
             
@@ -156,13 +212,13 @@ export const GET = async (req: Request) => {
           const imageResults = await searchSerper(query, {
             apiKey: serperApiKey,
             type: 'images',
-            num: 5,
+            num: 10,
           });
           
           // Map news results with image URLs and category tag
           const resultsWithImages = newsResults.results.map((article, index) => ({
             ...article,
-            thumbnailUrl: imageResults.results[index]?.url || article.imageUrl || '',
+            thumbnailUrl: imageResults.results[index]?.imageUrl || article.imageUrl || '',
             category: categoryId,
             categoryName: category.name,
           }));
@@ -174,9 +230,13 @@ export const GET = async (req: Request) => {
         });
       });
 
-      const results = await Promise.all(allSearchPromises);
+      const categoryResults = await Promise.all(allSearchPromises);
+      const customResults = await Promise.all(customTopicPromises);
       
-      data = results
+      // Combine category and custom topic results
+      const allResults = [...categoryResults, ...customResults.flat()];
+      
+      data = allResults
         .flatMap(r => r.results)
         .filter((item) => {
           const url = item.url?.toLowerCase().trim();
@@ -187,14 +247,19 @@ export const GET = async (req: Request) => {
         .map((item: any) => {
           // Priority: Use real images from Serper, fallback to placeholder
           const categoryName = item.categoryName || item.category || topic;
-          let thumbnail = `https://via.placeholder.com/400x300/1e293b/64748b?text=${encodeURIComponent(categoryName.toUpperCase())}`;
           
           // Check multiple possible image fields
           const possibleImage = item.thumbnailUrl || item.imageUrl;
           
+          let thumbnail = '';
           if (possibleImage && !possibleImage.startsWith('data:')) {
             // Use actual image URL if it's not a base64 data URI
             thumbnail = possibleImage;
+            console.log(`[Discover] Using image for "${item.title?.substring(0, 50)}...": ${thumbnail.substring(0, 100)}`);
+          } else {
+            // Fallback to placeholder
+            thumbnail = `https://via.placeholder.com/800x600/1e293b/64748b?text=${encodeURIComponent(categoryName.toUpperCase())}`;
+            console.log(`[Discover] No image found for "${item.title?.substring(0, 50)}...", using placeholder`);
           }
           
           return {
@@ -209,52 +274,113 @@ export const GET = async (req: Request) => {
         .sort(() => Math.random() - 0.5);
         
     } else {
-      // Preview mode - single quick search from first category
-      const previewCategoryId = categoriesToSearch[0];
-      const previewCategory = getCategoryById(previewCategoryId);
+      // Preview mode - quick search using Serper for better results
+      const allPreviewPromises = [];
       
-      let randomQuery: string;
-      
-      if (previewCategory) {
-        // Use category keywords
-        const topKeywords = previewCategory.keywords.slice(0, 3);
-        randomQuery = `${topKeywords[Math.floor(Math.random() * topKeywords.length)]} news`;
-      } else {
-        // Fallback to legacy topic data
-        const previewTopicData = websitesForTopic[previewCategoryId as Topic];
-        randomQuery = previewTopicData?.query[
-          Math.floor(Math.random() * previewTopicData.query.length)
-        ] || 'news';
+      // Add custom topics to preview
+      if (customTopics.length > 0) {
+        customTopics.forEach((customTopic) => {
+          // Use first keyword for preview
+          const keyword = customTopic.keywords[0];
+          const query = `${keyword} news`;
+          
+          allPreviewPromises.push(
+            searchSerper(query, {
+              apiKey: serperApiKey,
+              type: 'news',
+              num: 3,
+            }).then(async (newsResults) => {
+              const imageResults = await searchSerper(query, {
+                apiKey: serperApiKey,
+                type: 'images',
+                num: 3,
+              });
+              
+              return newsResults.results.map((article, index) => ({
+                ...article,
+                thumbnailUrl: imageResults.results[index]?.imageUrl || article.imageUrl || '',
+                category: customTopic.id,
+                categoryName: customTopic.name,
+              }));
+            })
+          );
+        });
       }
       
-      data = (
-        await searchSearxng(randomQuery, {
-          engines: ['google'],
-          pageno: 1,
-          language: 'en',
+      // Add regular categories to preview
+      if (categoriesToSearch.length > 0) {
+        const previewCategoryId = categoriesToSearch[0];
+        const previewCategory = getCategoryById(previewCategoryId);
+        
+        let randomQuery: string;
+        
+        if (previewCategory) {
+          // Use category keywords
+          const topKeywords = previewCategory.keywords.slice(0, 3);
+          randomQuery = `${topKeywords[Math.floor(Math.random() * topKeywords.length)]} news`;
+        } else {
+          // Fallback to legacy topic data
+          const previewTopicData = websitesForTopic[previewCategoryId as Topic];
+          randomQuery = previewTopicData?.query[
+            Math.floor(Math.random() * previewTopicData.query.length)
+          ] || 'technology news';
+        }
+        
+        allPreviewPromises.push(
+          searchSerper(randomQuery, {
+            apiKey: serperApiKey,
+            type: 'news',
+            num: 3,
+          }).then(async (newsResults) => {
+            const imageResults = await searchSerper(randomQuery, {
+              apiKey: serperApiKey,
+              type: 'images',
+              num: 3,
+            });
+            
+            return newsResults.results.map((article, index) => ({
+              ...article,
+              thumbnailUrl: imageResults.results[index]?.imageUrl || article.imageUrl || '',
+              category: previewCategoryId,
+              categoryName: previewCategory?.name || previewCategoryId,
+            }));
+          })
+        );
+      }
+      
+      // Fetch all preview articles
+      const previewResults = await Promise.all(allPreviewPromises);
+      const seenUrls = new Set();
+      
+      data = previewResults
+        .flat()
+        .filter((item) => {
+          const url = item.url?.toLowerCase().trim();
+          if (seenUrls.has(url)) return false;
+          seenUrls.add(url);
+          return true;
         })
-      ).results
-        .map((item) => {
-          // Use available image fields, but skip base64 data URIs
-          let thumbnail = `https://via.placeholder.com/400x300/1e293b/64748b?text=${encodeURIComponent(previewCategoryId.toUpperCase())}`;
+        .map((item: any) => {
+          const categoryName = item.categoryName || item.category || 'News';
+          const possibleImage = item.thumbnailUrl || item.imageUrl;
           
-          if (item.thumbnail && !item.thumbnail.startsWith('data:')) {
-            thumbnail = item.thumbnail;
-          } else if (item.img_src && !item.img_src.startsWith('data:')) {
-            thumbnail = item.img_src;
-          } else if (item.thumbnail_src && !item.thumbnail_src.startsWith('data:')) {
-            thumbnail = item.thumbnail_src;
+          let thumbnail = '';
+          if (possibleImage && !possibleImage.startsWith('data:')) {
+            thumbnail = possibleImage;
+          } else {
+            thumbnail = `https://via.placeholder.com/400x300/9333ea/ffffff?text=${encodeURIComponent(categoryName)}`;
           }
           
           return {
             title: item.title,
             url: item.url,
-            content: item.content || '',
+            content: item.content || item.snippet || '',
             thumbnail,
-            category: previewCategoryId,
+            category: item.category,
+            categoryName: item.categoryName,
           };
         })
-        .slice(0, 6);
+        .slice(0, 10);
     }
 
     const categoriesDescription = allTopics 

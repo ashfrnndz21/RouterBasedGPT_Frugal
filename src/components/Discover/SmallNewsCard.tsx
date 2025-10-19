@@ -1,7 +1,10 @@
 import { Discover } from '@/app/discover/page';
 import Link from 'next/link';
+import { useState } from 'react';
 
 const SmallNewsCard = ({ item }: { item: Discover }) => {
+  const [imageError, setImageError] = useState(false);
+  
   // Safely handle thumbnail URL
   let thumbnailSrc = item.thumbnail;
   try {
@@ -13,6 +16,10 @@ const SmallNewsCard = ({ item }: { item: Discover }) => {
   } catch (e) {
     // Use thumbnail as-is if URL parsing fails
   }
+  
+  // Fallback image if thumbnail fails to load
+  const fallbackImage = `https://via.placeholder.com/600x400/1e293b/64748b?text=${encodeURIComponent('AI News')}`;
+  const displayImage = imageError ? fallbackImage : thumbnailSrc;
 
   return (
     <Link
@@ -20,11 +27,13 @@ const SmallNewsCard = ({ item }: { item: Discover }) => {
       className="rounded-3xl overflow-hidden bg-light-secondary dark:bg-dark-secondary shadow-sm shadow-light-200/10 dark:shadow-black/25 group flex flex-col"
       target="_blank"
     >
-      <div className="relative aspect-video overflow-hidden">
+      <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-purple-500/10 to-cyan-500/10">
         <img
           className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
-          src={thumbnailSrc}
+          src={displayImage}
           alt={item.title}
+          onError={() => setImageError(true)}
+          loading="lazy"
         />
       </div>
       <div className="p-4">

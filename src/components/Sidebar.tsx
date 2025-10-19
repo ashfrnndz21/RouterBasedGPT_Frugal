@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useSelectedLayoutSegments } from 'next/navigation';
 import React, { useState, type ReactNode } from 'react';
 import Layout from './Layout';
+import LanguageSelector from './LanguageSelector';
 
 const VerticalIconContainer = ({ children }: { children: ReactNode }) => {
   return (
@@ -74,9 +75,12 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
             ))}
           </VerticalIconContainer>
 
-          <Link href="/settings">
-            <Settings className="cursor-pointer" />
-          </Link>
+          <div className="flex flex-col items-center gap-3">
+            <LanguageSelector compact />
+            <Link href="/settings">
+              <Settings className="cursor-pointer" />
+            </Link>
+          </div>
         </div>
       </div>
 

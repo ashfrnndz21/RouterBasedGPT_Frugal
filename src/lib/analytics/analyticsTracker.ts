@@ -395,6 +395,7 @@ export function getAnalyticsTracker(): AnalyticsTracker {
       trackSearch: () => {},
       trackFeatureUse: () => {},
       trackModelUse: () => {},
+      trackTokens: () => {},
       trackSessionStart: () => {},
       trackSessionEnd: () => {},
       getAnalyticsData: () => ({} as AnalyticsData),

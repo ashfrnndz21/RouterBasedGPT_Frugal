@@ -1,0 +1,35 @@
+{
+  "common": {
+    "search": "ค้นหา",
+    "settings": "การตั้งค่า",
+    "loading": "กำลังโหลด...",
+    "error": "ข้อผิดพลาด",
+    "send": "ส่ง",
+    "clear": "ล้าง",
+    "save": "บันทึก",
+    "cancel": "ยกเลิก",
+    "delete": "ลบ",
+    "edit": "แก้ไข",
+    "close": "ปิด"
+  },
+  "chat": {
+    "placeholder": "ถามอะไรก็ได้...",
+    "send": "ส่ง",
+    "clear": "ล้างการสนทนา",
+    "newChat": "การสนทนาใหม่",
+    "emptyState": "เริ่มการสนทนา"
+  },
+  "nav": {
+    "home": "หน้าแรก",
+    "discover": "ค้นพบ",
+    "library": "คลัง",
+    "analytics": "การวิเคราะห์",
+    "settings": "การตั้งค่า"
+  },
+  "settings": {
+    "title": "การตั้งค่า",
+    "language": "ภาษา",
+    "theme": "ธีม",
+    "preferences": "การตั้งค่าที่ต้องการ"
+  }
+}
