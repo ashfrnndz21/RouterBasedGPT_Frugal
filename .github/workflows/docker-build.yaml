@@ -1,12 +1,16 @@
 name: Build & Push Docker Images
 
+# Disabled - Configure DockerHub credentials in repository secrets to enable
+# on:
+#   push:
+#     branches:
+#       - master
+#       - canary
+#   release:
+#     types: [published]
+
 on:
-  push:
-    branches:
-      - master
-      - canary
-  release:
-    types: [published]
+  workflow_dispatch:  # Manual trigger only
 
 jobs:
   build-amd64:
