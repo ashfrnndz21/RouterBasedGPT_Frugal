@@ -42,3 +42,4 @@ certificates
 
 # Metrics data (persisted metrics)
 data/metrics.json
+data/guardrails.json

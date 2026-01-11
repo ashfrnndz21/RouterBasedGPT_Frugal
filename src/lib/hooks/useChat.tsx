@@ -925,6 +925,57 @@ export const ChatProvider = ({
       }),
     });
 
+    // Handle non-OK responses (guardrails blocks, rate limits, etc.)
+    if (!res.ok) {
+      setLoading(false);
+      try {
+        const errorData = await res.json();
+        const errorMessage = errorData.error || errorData.message || 'Request was blocked';
+        
+        // Show user-friendly error message
+        toast.error(errorMessage);
+        
+        // Add error message to chat for visibility
+        setMessages((prevMessages) => [
+          ...prevMessages,
+          {
+            content: errorMessage,
+            messageId: crypto.randomBytes(7).toString('hex'),
+            chatId: chatId!,
+            role: 'assistant',
+            createdAt: new Date(),
+            metadata: {
+              error: true,
+              code: errorData.code,
+              violations: errorData.violations,
+              metadata: errorData.metadata,
+            },
+          },
+        ]);
+        return;
+      } catch (parseError) {
+        // If JSON parsing fails, show generic error
+        const statusText = res.status === 403 
+          ? 'Request blocked by guardrails' 
+          : res.status === 429 
+          ? 'Rate limit exceeded. Please try again later.'
+          : `Request failed (${res.status})`;
+        toast.error(statusText);
+        setMessages((prevMessages) => [
+          ...prevMessages,
+          {
+            content: statusText,
+            messageId: crypto.randomBytes(7).toString('hex'),
+            chatId: chatId!,
+            role: 'assistant',
+            createdAt: new Date(),
+            metadata: { error: true },
+          },
+        ]);
+        return;
+      }
+    }
+
     if (!res.body) throw new Error('No response body');
 
     const reader = res.body?.getReader();

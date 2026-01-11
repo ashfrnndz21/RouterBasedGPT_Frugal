@@ -21,6 +21,9 @@ import { prependLanguageInstruction } from '@/lib/prompts';
 import { StatefulOrchestrator } from '@/lib/orchestration/statefulOrchestrator';
 import { OrchestrationService } from '@/lib/orchestration/orchestrationService';
 import { z } from 'zod';
+import { loadGuardrailsConfig } from '@/lib/guardrails/storage/guardrailsStore';
+import { Guardrails } from '@/lib/guardrails';
+import { getBestEmbeddingForGuardrails } from '@/lib/guardrails/utils/getBestEmbedding';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -429,6 +432,57 @@ export const POST = async (req: Request) => {
         });
       }
     });
+
+    // Apply guardrails (after history is created)
+    try {
+      const guardrailsConfig = loadGuardrailsConfig();
+      
+      // Use best embedding model for guardrails if topic banning is enabled
+      // This ensures better semantic similarity accuracy
+      let guardrailsEmbedding = embedding;
+      if (guardrailsConfig.dynamic.topicBanning.enabled) {
+        const bestEmbedding = await getBestEmbeddingForGuardrails(
+          guardrailsConfig.dynamic.topicBanning.embeddingModel
+        );
+        if (bestEmbedding) {
+          guardrailsEmbedding = bestEmbedding;
+          console.log('[Chat API] Using optimized embedding model for guardrails');
+        }
+      }
+      
+      const guardrails = new Guardrails(guardrailsConfig, guardrailsEmbedding, llm);
+      
+      // Get client identifier for rate limiting
+      const clientId = req.headers.get('x-forwarded-for') || 
+                      req.headers.get('x-real-ip') || 
+                      message.chatId || 
+                      'unknown';
+      
+      // Determine tier (will be determined by router, but use tier1 as default for guardrails check)
+      const tier: 'tier1' | 'tier2' = 'tier1';
+      
+      // Check guardrails
+      const guardrailResult = await guardrails.check(
+        message.content,
+        history,
+        tier,
+        clientId
+      );
+      
+      if (!guardrailResult.allowed) {
+        const statusCode = guardrailResult.code === 'RATE_LIMIT_EXCEEDED' ? 429 : 403;
+        return Response.json({
+          error: guardrailResult.reason,
+          code: guardrailResult.code,
+          violations: guardrailResult.violations,
+          metadata: guardrailResult.metadata,
+        }, { status: statusCode });
+      }
+    } catch (error: any) {
+      // Log error but don't block request if guardrails fail
+      console.error('[Chat API] Guardrails check failed:', error);
+      // Continue with request if guardrails fail (fail-open for now)
+    }
 
     const handler = searchHandlers[body.focusMode];
 
