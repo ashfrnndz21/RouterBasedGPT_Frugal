@@ -20,10 +20,10 @@ const EMBEDDING_PRIORITY = {
 
   
   // Local models (best to worst)
+  'ollama:qwen3-embedding:4b': 1,
   'ollama:bge-large': 3,
   'ollama:mxbai-embed-large': 4,
   'ollama:snowflake-arctic-embed': 5,
-  'ollama:qwen3-embedding': 6,
   'ollama:all-minilm': 7,
   'ollama:nomic-embed-text': 8,
   'ollama:nomic-embed-text:latest': 8,

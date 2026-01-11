@@ -1,16 +1,20 @@
 'use client';
 
-import { Shield, Ban, Hash, FileText, Settings, TestTube, ArrowLeft, Loader2 } from 'lucide-react';
+import { Shield, Ban, Hash, FileText, Settings, TestTube, ArrowLeft, Loader2, LogOut } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import TopicBanEditor from '@/components/guardrails/TopicBanEditor';
 import KeywordBanEditor from '@/components/guardrails/KeywordBanEditor';
 import StaticGuardrailsPanel from '@/components/guardrails/StaticGuardrailsPanel';
 import GuardrailTestPanel from '@/components/guardrails/GuardrailTestPanel';
+import OutputKeywordBanEditor from '@/components/guardrails/OutputKeywordBanEditor';
+import PIIDetectionPanel from '@/components/guardrails/PIIDetectionPanel';
+import PatternBlockingPanel from '@/components/guardrails/PatternBlockingPanel';
 import { GuardrailsConfig } from '@/lib/guardrails/types';
 
 export default function GuardrailsPage() {
-  const [activeTab, setActiveTab] = useState<'topics' | 'keywords' | 'static' | 'test'>('topics');
+  const [activeTab, setActiveTab] = useState<'topics' | 'keywords' | 'static' | 'output' | 'test'>('topics');
+  const [outputSubTab, setOutputSubTab] = useState<'keywords' | 'pii' | 'patterns'>('keywords');
   const [config, setConfig] = useState<GuardrailsConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -37,6 +41,7 @@ export default function GuardrailsPage() {
     { id: 'topics' as const, label: 'Banned Topics', icon: Ban },
     { id: 'keywords' as const, label: 'Banned Keywords', icon: Hash },
     { id: 'static' as const, label: 'Static Rules', icon: Settings },
+    { id: 'output' as const, label: 'Output Guardrails', icon: LogOut },
     { id: 'test' as const, label: 'Test Guardrails', icon: TestTube },
   ];
 
@@ -102,6 +107,123 @@ export default function GuardrailsPage() {
         )}
         {activeTab === 'static' && (
           <StaticGuardrailsPanel config={config} onUpdate={fetchGuardrailsConfig} />
+        )}
+        {activeTab === 'output' && (
+          <div className="space-y-6">
+            {/* Output Guardrails Master Toggle */}
+            <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+              <div>
+                <h3 className="font-medium text-gray-900 dark:text-white">Output Guardrails</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Check AI responses before sending to users
+                </p>
+              </div>
+              <button
+                onClick={async () => {
+                  const outputConfig = config.output || {
+                    enabled: false,
+                    keywordBlocking: { enabled: false, keywords: [], matchMode: 'contains', caseSensitive: false },
+                    piiDetection: { enabled: false, types: [], action: 'block' },
+                    patternBlocking: { enabled: false, patterns: [] },
+                    safeMessage: "I apologize, but I cannot provide this response due to content policy restrictions.",
+                  };
+                  await fetch('/api/guardrails', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      output: {
+                        ...outputConfig,
+                        enabled: !outputConfig.enabled,
+                      },
+                    }),
+                  });
+                  fetchGuardrailsConfig();
+                }}
+                className={`px-4 py-2 rounded-lg transition-colors ${
+                  config.output?.enabled
+                    ? 'bg-green-600 text-white hover:bg-green-700'
+                    : 'bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-500'
+                }`}
+              >
+                {config.output?.enabled ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+
+            {config.output?.enabled && (
+              <>
+                {/* Safe Message Configuration */}
+                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Safe Message (shown when response is blocked)
+                  </label>
+                  <textarea
+                    value={config.output?.safeMessage || ''}
+                    onChange={async (e) => {
+                      await fetch('/api/guardrails', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          output: {
+                            ...config.output,
+                            safeMessage: e.target.value,
+                          },
+                        }),
+                      });
+                      fetchGuardrailsConfig();
+                    }}
+                    rows={2}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                    placeholder="I apologize, but I cannot provide this response due to content policy restrictions."
+                  />
+                </div>
+
+                {/* Output Sub-tabs */}
+                <div className="flex gap-2 border-b border-gray-200 dark:border-gray-700">
+                  <button
+                    onClick={() => setOutputSubTab('keywords')}
+                    className={`px-4 py-2 border-b-2 transition-colors ${
+                      outputSubTab === 'keywords'
+                        ? 'border-blue-500 text-blue-600 dark:text-blue-400 font-medium'
+                        : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    Output Keywords
+                  </button>
+                  <button
+                    onClick={() => setOutputSubTab('pii')}
+                    className={`px-4 py-2 border-b-2 transition-colors ${
+                      outputSubTab === 'pii'
+                        ? 'border-blue-500 text-blue-600 dark:text-blue-400 font-medium'
+                        : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    PII Detection
+                  </button>
+                  <button
+                    onClick={() => setOutputSubTab('patterns')}
+                    className={`px-4 py-2 border-b-2 transition-colors ${
+                      outputSubTab === 'patterns'
+                        ? 'border-blue-500 text-blue-600 dark:text-blue-400 font-medium'
+                        : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    Pattern Blocking
+                  </button>
+                </div>
+
+                {/* Output Sub-content */}
+                {outputSubTab === 'keywords' && (
+                  <OutputKeywordBanEditor config={config} onUpdate={fetchGuardrailsConfig} />
+                )}
+                {outputSubTab === 'pii' && (
+                  <PIIDetectionPanel config={config} onUpdate={fetchGuardrailsConfig} />
+                )}
+                {outputSubTab === 'patterns' && (
+                  <PatternBlockingPanel config={config} onUpdate={fetchGuardrailsConfig} />
+                )}
+              </>
+            )}
+          </div>
         )}
         {activeTab === 'test' && (
           <GuardrailTestPanel config={config} />

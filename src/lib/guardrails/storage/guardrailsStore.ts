@@ -50,6 +50,22 @@ export function loadGuardrailsConfig(): GuardrailsConfig {
           ...config.dynamic?.organizationRelevance,
         },
       },
+      output: defaults.output ? {
+        ...defaults.output,
+        ...(config.output || {}),
+        keywordBlocking: {
+          ...defaults.output.keywordBlocking,
+          ...(config.output?.keywordBlocking || {}),
+        },
+        piiDetection: {
+          ...defaults.output.piiDetection,
+          ...(config.output?.piiDetection || {}),
+        },
+        patternBlocking: {
+          ...defaults.output.patternBlocking,
+          ...(config.output?.patternBlocking || {}),
+        },
+      } : (config.output || getDefaultGuardrailsConfig().output),
     };
   } catch (error: any) {
     if (error.code === 'ENOENT') {

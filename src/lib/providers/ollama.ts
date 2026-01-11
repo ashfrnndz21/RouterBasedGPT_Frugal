@@ -67,8 +67,9 @@ export const loadOllamaEmbeddingModels = async () => {
   if (!ollamaApiEndpoint) return {};
 
   // FRUGAL RAG: Load embedding models - prefer better quality models for semantic similarity
-  // Priority order: bge-large > mxbai-embed-large > snowflake-arctic-embed > qwen3-embedding > nomic-embed-text
+  // Priority order: qwen3-embedding:0.6b > bge-large > mxbai-embed-large > snowflake-arctic-embed > qwen3-embedding > nomic-embed-text
   const ALLOWED_EMBEDDING_MODELS = [
+    'qwen3-embedding:0.6b',
     'bge-large',
     'mxbai-embed-large',
     'snowflake-arctic-embed',

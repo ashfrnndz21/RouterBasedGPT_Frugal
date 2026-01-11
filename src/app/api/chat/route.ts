@@ -24,6 +24,8 @@ import { z } from 'zod';
 import { loadGuardrailsConfig } from '@/lib/guardrails/storage/guardrailsStore';
 import { Guardrails } from '@/lib/guardrails';
 import { getBestEmbeddingForGuardrails } from '@/lib/guardrails/utils/getBestEmbedding';
+import { OutputGuardrails } from '@/lib/guardrails/output';
+import { FrugalRouter } from '@/lib/routing/frugalRouter';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -104,12 +106,68 @@ const handleEmitterEvents = async (
   const startTime = Date.now();
   let sourcesReceived = false;
   let responseMetadata: any = null; // Store metadata from orchestrator
+  let outputGuardrails: OutputGuardrails | null = null;
+  let streamBlocked = false; // Flag to stop streaming if blocked
+  
+  // Check if output guardrails are enabled (to enable incremental checking)
+  try {
+    const guardrailsConfig = loadGuardrailsConfig();
+    if (guardrailsConfig.output?.enabled) {
+      outputGuardrails = new OutputGuardrails(guardrailsConfig.output);
+    }
+  } catch (error) {
+    console.warn('[Chat] Could not initialize output guardrails for incremental checking:', error);
+  }
 
   stream.on('data', (data) => {
     try {
       const parsedData = JSON.parse(data);
       
       if (parsedData.type === 'response') {
+        // If already blocked, don't send more chunks
+        if (streamBlocked) {
+          return;
+        }
+
+        recievedMessage += parsedData.data;
+        
+        // Incremental check with sliding window (last ~100 chars = ~5-6 words)
+        if (outputGuardrails && recievedMessage.length > 10) {
+          const partialCheck = outputGuardrails.checkPartialResponse(recievedMessage, 100);
+          
+          if (!partialCheck.allowed) {
+            // Violation detected - stop streaming immediately
+            streamBlocked = true;
+            const guardrailsConfig = loadGuardrailsConfig();
+            const safeMessage = guardrailsConfig.output?.safeMessage || 'Response blocked by guardrails';
+            
+            console.warn('[Output Guardrails] Early violation detected, stopping stream:', partialCheck.reason);
+            
+            // Send outputBlocked event immediately
+            writer.write(
+              encoder.encode(
+                JSON.stringify({
+                  type: 'outputBlocked',
+                  messageId: aiMessageId,
+                  safeMessage: safeMessage,
+                  reason: partialCheck.reason,
+                  violations: partialCheck.violations || [],
+                  metadata: partialCheck.metadata,
+                }) + '\n',
+              ),
+            ).catch((err) => {
+              if (err?.name !== 'ResponseAborted') {
+                console.error('[Chat] Error writing outputBlocked event:', err);
+              }
+            });
+            
+            // Update received message for database
+            recievedMessage = safeMessage;
+            return; // Don't send this chunk
+          }
+        }
+        
+        // Chunk passed check - send it
         writer.write(
           encoder.encode(
             JSON.stringify({
@@ -124,8 +182,6 @@ const handleEmitterEvents = async (
             console.error('[Chat] Error writing response:', err);
           }
         });
-
-        recievedMessage += parsedData.data;
         
         // Capture metadata from orchestrator if available
         if (parsedData.metadata) {
@@ -169,7 +225,7 @@ const handleEmitterEvents = async (
       console.error('[Chat] Error handling stream data:', error, 'Data:', data);
     }
   });
-  stream.on('end', () => {
+  stream.on('end', async () => {
     const endTime = Date.now();
     const latencyMs = endTime - startTime;
     
@@ -185,6 +241,50 @@ const handleEmitterEvents = async (
     // Ensure latencyMs is set
     if (!metadata.latencyMs) {
       metadata.latencyMs = latencyMs;
+    }
+
+    // Final output guardrails check (for PII detection and full context checks)
+    // Note: If streamBlocked is true, we already handled it incrementally
+    if (!streamBlocked) {
+      try {
+        const guardrailsConfig = loadGuardrailsConfig();
+        if (guardrailsConfig.output?.enabled && outputGuardrails) {
+          const outputCheck = await outputGuardrails.checkResponse(recievedMessage);
+          
+          if (!outputCheck.allowed) {
+            // Response was blocked - send special event to frontend
+            const blockedMessage = outputCheck.filtered || guardrailsConfig.output.safeMessage;
+            const violations = outputCheck.violations || [];
+            recievedMessage = blockedMessage;
+            console.warn('[Output Guardrails] Response blocked (final check):', outputCheck.reason, violations);
+            
+            // Send outputBlocked event to frontend so it can replace the displayed message
+            writer.write(
+              encoder.encode(
+                JSON.stringify({
+                  type: 'outputBlocked',
+                  messageId: aiMessageId,
+                  safeMessage: blockedMessage,
+                  reason: outputCheck.reason,
+                  violations: violations,
+                  metadata: outputCheck.metadata,
+                }) + '\n',
+              ),
+            ).catch((err) => {
+              if (err?.name !== 'ResponseAborted') {
+                console.error('[Chat] Error writing outputBlocked event:', err);
+              }
+            });
+          } else if (outputCheck.filtered && outputCheck.filtered !== recievedMessage) {
+            // Response was sanitized (PII redacted) but allowed
+            recievedMessage = outputCheck.filtered;
+            console.log('[Output Guardrails] Response sanitized (PII redacted)');
+          }
+        }
+      } catch (error) {
+        console.error('[Output Guardrails] Final check failed:', error);
+        // Fail-open: allow response through if check fails
+      }
     }
 
     // Check if writer is still open before writing
@@ -433,55 +533,63 @@ export const POST = async (req: Request) => {
       }
     });
 
-    // Apply guardrails (after history is created)
-    try {
-      const guardrailsConfig = loadGuardrailsConfig();
-      
-      // Use best embedding model for guardrails if topic banning is enabled
-      // This ensures better semantic similarity accuracy
-      let guardrailsEmbedding = embedding;
-      if (guardrailsConfig.dynamic.topicBanning.enabled) {
-        const bestEmbedding = await getBestEmbeddingForGuardrails(
-          guardrailsConfig.dynamic.topicBanning.embeddingModel
-        );
-        if (bestEmbedding) {
-          guardrailsEmbedding = bestEmbedding;
-          console.log('[Chat API] Using optimized embedding model for guardrails');
+    // Check if this is a canned response - skip guardrails for pre-approved static responses
+    const frugalRouter = new FrugalRouter();
+    const isCannedResponse = frugalRouter.getCannedResponse(message.content) !== null;
+    
+    // Apply guardrails (after history is created) - skip for canned responses
+    if (!isCannedResponse) {
+      try {
+        const guardrailsConfig = loadGuardrailsConfig();
+        
+        // Use best embedding model for guardrails if topic banning is enabled
+        // This ensures better semantic similarity accuracy
+        let guardrailsEmbedding = embedding;
+        if (guardrailsConfig.dynamic.topicBanning.enabled) {
+          const bestEmbedding = await getBestEmbeddingForGuardrails(
+            guardrailsConfig.dynamic.topicBanning.embeddingModel
+          );
+          if (bestEmbedding) {
+            guardrailsEmbedding = bestEmbedding;
+            console.log('[Chat API] Using optimized embedding model for guardrails');
+          }
         }
+        
+        const guardrails = new Guardrails(guardrailsConfig, guardrailsEmbedding, llm);
+        
+        // Get client identifier for rate limiting
+        const clientId = req.headers.get('x-forwarded-for') || 
+                        req.headers.get('x-real-ip') || 
+                        message.chatId || 
+                        'unknown';
+        
+        // Determine tier (will be determined by router, but use tier1 as default for guardrails check)
+        const tier: 'tier1' | 'tier2' = 'tier1';
+        
+        // Check guardrails
+        const guardrailResult = await guardrails.check(
+          message.content,
+          history,
+          tier,
+          clientId
+        );
+        
+        if (!guardrailResult.allowed) {
+          const statusCode = guardrailResult.code === 'RATE_LIMIT_EXCEEDED' ? 429 : 403;
+          return Response.json({
+            error: guardrailResult.reason,
+            code: guardrailResult.code,
+            violations: guardrailResult.violations,
+            metadata: guardrailResult.metadata,
+          }, { status: statusCode });
+        }
+      } catch (error: any) {
+        // Log error but don't block request if guardrails fail
+        console.error('[Chat API] Guardrails check failed:', error);
+        // Continue with request if guardrails fail (fail-open for now)
       }
-      
-      const guardrails = new Guardrails(guardrailsConfig, guardrailsEmbedding, llm);
-      
-      // Get client identifier for rate limiting
-      const clientId = req.headers.get('x-forwarded-for') || 
-                      req.headers.get('x-real-ip') || 
-                      message.chatId || 
-                      'unknown';
-      
-      // Determine tier (will be determined by router, but use tier1 as default for guardrails check)
-      const tier: 'tier1' | 'tier2' = 'tier1';
-      
-      // Check guardrails
-      const guardrailResult = await guardrails.check(
-        message.content,
-        history,
-        tier,
-        clientId
-      );
-      
-      if (!guardrailResult.allowed) {
-        const statusCode = guardrailResult.code === 'RATE_LIMIT_EXCEEDED' ? 429 : 403;
-        return Response.json({
-          error: guardrailResult.reason,
-          code: guardrailResult.code,
-          violations: guardrailResult.violations,
-          metadata: guardrailResult.metadata,
-        }, { status: statusCode });
-      }
-    } catch (error: any) {
-      // Log error but don't block request if guardrails fail
-      console.error('[Chat API] Guardrails check failed:', error);
-      // Continue with request if guardrails fail (fail-open for now)
+    } else {
+      console.log('[Chat API] Skipping guardrails for canned response:', message.content);
     }
 
     const handler = searchHandlers[body.focusMode];

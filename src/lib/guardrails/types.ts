@@ -10,6 +10,10 @@ export enum GuardrailViolationCode {
   CUSTOM_RULE_VIOLATION = 'CUSTOM_RULE_VIOLATION',
   CONTENT_MODERATION = 'CONTENT_MODERATION',
   ORGANIZATION_RELEVANCE = 'ORGANIZATION_RELEVANCE',
+  // Output guardrails
+  OUTPUT_KEYWORD_BLOCKED = 'OUTPUT_KEYWORD_BLOCKED',
+  OUTPUT_PII_DETECTED = 'OUTPUT_PII_DETECTED',
+  OUTPUT_PATTERN_BLOCKED = 'OUTPUT_PATTERN_BLOCKED',
 }
 
 export interface GuardrailResult {
@@ -107,9 +111,36 @@ export interface DynamicGuardrailsConfig {
   organizationRelevance: OrganizationRelevanceConfig;
 }
 
+export interface OutputGuardrailsConfig {
+  enabled: boolean;
+  keywordBlocking: {
+    enabled: boolean;
+    keywords: string[];
+    matchMode: 'exact' | 'contains' | 'regex';
+    caseSensitive: boolean;
+  };
+  piiDetection: {
+    enabled: boolean;
+    types: ('email' | 'phone' | 'ssn' | 'credit-card' | 'ip-address')[];
+    action: 'block' | 'redact';
+    redactionChar?: string; // e.g., '***'
+  };
+  patternBlocking: {
+    enabled: boolean;
+    patterns: Array<{
+      id: string;
+      name: string;
+      pattern: string; // regex pattern
+      description?: string;
+    }>;
+  };
+  safeMessage: string; // Message to show when response is blocked
+}
+
 export interface GuardrailsConfig {
   static: StaticGuardrailsConfig;
   dynamic: DynamicGuardrailsConfig;
+  output?: OutputGuardrailsConfig; // Optional for backward compatibility
   version: string;
   lastUpdated: number;
 }
@@ -164,6 +195,26 @@ export function getDefaultGuardrailsConfig(): GuardrailsConfig {
         threshold: 0.70,
         mode: 'allow-only',
       },
+    },
+    output: {
+      enabled: false,
+      keywordBlocking: {
+        enabled: false,
+        keywords: [],
+        matchMode: 'contains',
+        caseSensitive: false,
+      },
+      piiDetection: {
+        enabled: false,
+        types: ['email', 'phone', 'ssn'],
+        action: 'block',
+        redactionChar: '***',
+      },
+      patternBlocking: {
+        enabled: false,
+        patterns: [],
+      },
+      safeMessage: "I apologize, but I cannot provide this response due to content policy restrictions.",
     },
     version: '1.0.0',
     lastUpdated: Date.now(),

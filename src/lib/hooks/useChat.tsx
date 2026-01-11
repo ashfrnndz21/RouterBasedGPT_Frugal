@@ -115,6 +115,15 @@ const checkConfig = async (
       return res.json();
     });
 
+    console.log('[useChat] Fetched providers:', {
+      chatProviders: Object.keys(providers.chatModelProviders || {}),
+      embeddingProviders: Object.keys(providers.embeddingModelProviders || {}),
+      embeddingModels: providers.embeddingModelProviders ? 
+        Object.keys(providers.embeddingModelProviders).flatMap(provider => 
+          Object.keys(providers.embeddingModelProviders[provider] || {})
+        ) : [],
+    });
+
     if (
       !chatModel ||
       !chatModelProvider ||
@@ -126,7 +135,10 @@ const checkConfig = async (
         const chatModelProvidersKeys = Object.keys(chatModelProviders);
 
         if (!chatModelProviders || chatModelProvidersKeys.length === 0) {
-          return toast.error('No chat models available');
+          toast.error('No chat models available');
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
         } else {
           chatModelProvider =
             chatModelProvidersKeys.find(
@@ -142,7 +154,16 @@ const checkConfig = async (
           toast.error(
             "Looks like you haven't configured any chat model providers. Please configure them from the settings page or the config file.",
           );
-          return setHasError(true);
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
+        }
+
+        if (!chatModelProviders[chatModelProvider] || Object.keys(chatModelProviders[chatModelProvider]).length === 0) {
+          toast.error(`No models available for provider: ${chatModelProvider}`);
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
         }
 
         chatModel = Object.keys(chatModelProviders[chatModelProvider])[0];
@@ -154,10 +175,20 @@ const checkConfig = async (
         if (
           !embeddingModelProviders ||
           Object.keys(embeddingModelProviders).length === 0
-        )
-          return toast.error('No embedding models available');
+        ) {
+          toast.error('No embedding models available');
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
+        }
 
         embeddingModelProvider = Object.keys(embeddingModelProviders)[0];
+        if (!embeddingModelProvider || !embeddingModelProviders[embeddingModelProvider] || Object.keys(embeddingModelProviders[embeddingModelProvider]).length === 0) {
+          toast.error('No embedding models available');
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
+        }
         embeddingModel = Object.keys(
           embeddingModelProviders[embeddingModelProvider],
         )[0];
@@ -196,16 +227,23 @@ const checkConfig = async (
           toast.error(
             "Looks like you haven't configured any chat model providers. Please configure them from the settings page or the config file.",
           );
-          return setHasError(true);
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
         }
 
-        chatModel = Object.keys(
-          chatModelProviders[
-            Object.keys(chatModelProviders[chatModelProvider]).length > 0
-              ? chatModelProvider
-              : Object.keys(chatModelProviders)[0]
-          ],
-        )[0];
+        const fallbackProvider = Object.keys(chatModelProviders[chatModelProvider]).length > 0
+          ? chatModelProvider
+          : Object.keys(chatModelProviders)[0];
+
+        if (!fallbackProvider || !chatModelProviders[fallbackProvider] || Object.keys(chatModelProviders[fallbackProvider]).length === 0) {
+          toast.error('No chat models available');
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
+        }
+
+        chatModel = Object.keys(chatModelProviders[fallbackProvider])[0];
 
         localStorage.setItem('chatModel', chatModel);
       }
@@ -220,14 +258,40 @@ const checkConfig = async (
 
       if (
         embeddingModelProvider &&
+        embeddingModelProviders[embeddingModelProvider] &&
         !embeddingModelProviders[embeddingModelProvider][embeddingModel]
       ) {
-        embeddingModel = Object.keys(
-          embeddingModelProviders[embeddingModelProvider],
-        )[0];
+        const availableModels = Object.keys(embeddingModelProviders[embeddingModelProvider]);
+        if (availableModels.length === 0) {
+          toast.error(`No embedding models available for provider: ${embeddingModelProvider}`);
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
+        }
+        embeddingModel = availableModels[0];
         localStorage.setItem('embeddingModel', embeddingModel);
       }
     }
+
+    if (!chatModel || !chatModelProvider || !embeddingModel || !embeddingModelProvider) {
+      console.error('[useChat] Missing required model configuration:', {
+        chatModel,
+        chatModelProvider,
+        embeddingModel,
+        embeddingModelProvider,
+      });
+      toast.error('Failed to configure models. Please check your settings.');
+      setHasError(true);
+      setIsConfigReady(false);
+      return;
+    }
+
+    console.log('[useChat] Configuration ready:', {
+      chatModel,
+      chatModelProvider,
+      embeddingModel,
+      embeddingModelProvider,
+    });
 
     setChatModelProvider({
       name: chatModel!,
@@ -797,6 +861,39 @@ export const ChatProvider = ({
           );
         }
         recievedMessage += data.data;
+      }
+
+      if (data.type === 'outputBlocked') {
+        // Output guardrails blocked the response - replace the displayed message immediately
+        console.log('[useChat] Output guardrails blocked response:', data.reason);
+        toast.error('Response blocked by guardrails');
+        
+        setMessages((prev) =>
+          prev.map((message) => {
+            if (
+              message.messageId === data.messageId &&
+              message.role === 'assistant'
+            ) {
+              return {
+                ...message,
+                content: data.safeMessage,
+                metadata: {
+                  ...(message.metadata || {}),
+                  error: true,
+                  violations: data.violations,
+                  reason: data.reason,
+                  code: 'OUTPUT_BLOCKED',
+                },
+              };
+            }
+            return message;
+          }),
+        );
+        
+        // Update received message for chat history
+        recievedMessage = data.safeMessage;
+        setLoading(false);
+        return;
       }
 
       if (data.type === 'messageEnd') {

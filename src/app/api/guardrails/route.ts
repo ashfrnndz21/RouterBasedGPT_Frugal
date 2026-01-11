@@ -32,12 +32,12 @@ export async function POST(req: NextRequest) {
     const updates = await req.json() as Partial<GuardrailsConfig>;
     
     // Validate that updates have expected structure
-    if (updates.static || updates.dynamic) {
+    if (updates.static || updates.dynamic || updates.output) {
       const updated = updateGuardrailsConfig(updates);
       return NextResponse.json({ success: true, config: updated });
     } else {
       return NextResponse.json(
-        { error: 'Invalid update structure. Expected "static" or "dynamic" fields.' },
+        { error: 'Invalid update structure. Expected "static", "dynamic", or "output" fields.' },
         { status: 400 }
       );
     }
