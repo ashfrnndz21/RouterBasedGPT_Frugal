@@ -916,6 +916,12 @@ export const ChatProvider = ({
         },
         systemInstructions: localStorage.getItem('systemInstructions'),
         language: language,
+        maxHistoryTurns: (() => {
+          const stored = localStorage.getItem('maxHistoryTurns');
+          const value = stored ? parseInt(stored, 10) : 2;
+          // Ensure value is within valid range
+          return isNaN(value) || value < 1 || value > 50 ? 2 : value;
+        })(),
       }),
     });
 

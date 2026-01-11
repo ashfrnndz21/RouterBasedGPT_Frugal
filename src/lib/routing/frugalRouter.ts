@@ -55,6 +55,12 @@ const SIMPLE_PATTERNS = [
 export class FrugalRouter {
   /**
    * Route a query to the appropriate processing path
+   * 
+   * Flow:
+   * 1. Canned responses (greetings) → instant response
+   * 2. Simple queries → route directly to tier1 (skip cache for speed)
+   * 3. Medium queries → check cache first, then tier1 if miss
+   * 4. Complex queries → route directly to tier2 (skip cache for speed)
    */
   async route(query: string, history: BaseMessage[]): Promise<RouterDecision> {
     const trimmedQuery = query.trim();
@@ -69,11 +75,12 @@ export class FrugalRouter {
       };
     }
     
-    // 2. Check query complexity
+    // 2. Classify query complexity
     const complexity = this.classifyComplexity(trimmedQuery);
     
     // 3. Route based on complexity
     if (complexity === 'high') {
+      // Complex queries go directly to tier2 (skip cache)
       return {
         path: 'rag-tier2',
         confidence: 0.85,
@@ -81,11 +88,20 @@ export class FrugalRouter {
       };
     }
     
-    // 4. Default to cache check + tier1 for simple/medium queries
+    if (complexity === 'simple') {
+      // Simple queries go directly to tier1 (skip cache for speed)
+      return {
+        path: 'rag-tier1',
+        confidence: 0.9,
+        reasoning: 'Simple factual query - use fast tier1 model',
+      };
+    }
+    
+    // Medium complexity queries check cache first
     return {
       path: 'cache',
       confidence: 0.9,
-      reasoning: 'Simple or medium complexity query',
+      reasoning: 'Medium complexity query - check cache first',
     };
   }
   

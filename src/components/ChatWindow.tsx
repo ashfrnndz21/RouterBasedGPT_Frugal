@@ -25,6 +25,11 @@ export interface ResponseMetadata {
   tokensSaved?: number;
   estimatedCost?: number;
   latencyMs?: number;
+  tokenUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens?: number;
+  };
 }
 
 export interface AssistantMessage extends BaseMessage {

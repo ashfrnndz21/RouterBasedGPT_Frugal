@@ -1,4 +1,6 @@
 import { RoutingPath } from '../routing/frugalRouter';
+import fs from 'fs';
+import path from 'path';
 
 export interface QueryMetrics {
   timestamp: number;
@@ -7,6 +9,7 @@ export interface QueryMetrics {
   cacheHit: boolean;
   modelTier?: 'tier1' | 'tier2';
   latencyMs: number;
+  estimatedCost?: number;
 }
 
 export interface AggregatedMetrics {
@@ -28,12 +31,70 @@ export interface AggregatedMetrics {
 /**
  * MetricsTracker - Track query metrics for cost analysis
  * 
- * For demo purposes, this uses in-memory storage.
- * In production, this would persist to a database.
+ * Persists metrics to file system to survive server restarts.
  */
 export class MetricsTracker {
   private metrics: QueryMetrics[] = [];
   private maxMetrics: number = 1000;
+  private readonly metricsFilePath: string;
+  private saveTimeout: NodeJS.Timeout | null = null;
+  
+  constructor() {
+    // Store metrics in data directory
+    const dataDir = path.join(process.cwd(), 'data');
+    this.metricsFilePath = path.join(dataDir, 'metrics.json');
+    
+    // Ensure data directory exists
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    
+    // Load persisted metrics on startup
+    this.loadMetrics();
+  }
+  
+  /**
+   * Load metrics from file
+   */
+  private loadMetrics(): void {
+    try {
+      if (fs.existsSync(this.metricsFilePath)) {
+        const fileData = fs.readFileSync(this.metricsFilePath, 'utf-8');
+        const parsed = JSON.parse(fileData);
+        
+        if (Array.isArray(parsed)) {
+          this.metrics = parsed;
+          console.log(`[Metrics] Loaded ${this.metrics.length} metrics from file`);
+        }
+      }
+    } catch (error) {
+      console.error('[Metrics] Failed to load metrics from file:', error);
+      this.metrics = [];
+    }
+  }
+  
+  /**
+   * Save metrics to file (debounced)
+   */
+  private saveMetrics(): void {
+    // Clear existing timeout
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+    }
+    
+    // Debounce saves to avoid excessive file writes
+    this.saveTimeout = setTimeout(() => {
+      try {
+        fs.writeFileSync(
+          this.metricsFilePath,
+          JSON.stringify(this.metrics, null, 2),
+          'utf-8'
+        );
+      } catch (error) {
+        console.error('[Metrics] Failed to save metrics to file:', error);
+      }
+    }, 1000); // Save after 1 second of inactivity
+  }
   
   /**
    * Log a query with its routing and performance metrics
@@ -45,6 +106,9 @@ export class MetricsTracker {
     if (this.metrics.length > this.maxMetrics) {
       this.metrics.shift();
     }
+    
+    // Persist to file
+    this.saveMetrics();
     
     console.log(`[Metrics] Query logged: ${metrics.routingPath} (${metrics.latencyMs}ms)`);
   }
@@ -123,6 +187,16 @@ export class MetricsTracker {
    */
   clear(): void {
     this.metrics = [];
+    // Save empty array to file
+    try {
+      fs.writeFileSync(
+        this.metricsFilePath,
+        JSON.stringify([], null, 2),
+        'utf-8'
+      );
+    } catch (error) {
+      console.error('[Metrics] Failed to clear metrics file:', error);
+    }
     console.log('[Metrics] Metrics cleared');
   }
 }

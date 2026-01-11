@@ -64,10 +64,16 @@ export class AnalyticsTracker {
   }
 
   /**
-   * Load analytics data from localStorage
+   * Load analytics data from localStorage (client-side only)
    */
   private loadData(): AnalyticsData {
     try {
+      // Check if we're in a browser environment
+      if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+        // Server-side: return default data
+        return this.getDefaultData();
+      }
+      
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
@@ -134,9 +140,15 @@ export class AnalyticsTracker {
   }
 
   /**
-   * Save analytics data to localStorage (debounced)
+   * Save analytics data to localStorage (debounced, client-side only)
    */
   private saveData(): void {
+    // Check if we're in a browser environment
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+      // Server-side: don't save (analytics is client-side only)
+      return;
+    }
+    
     // Debounce writes to avoid excessive localStorage operations
     if (this.writeTimeout) {
       clearTimeout(this.writeTimeout);

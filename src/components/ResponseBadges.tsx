@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { ResponseMetadata } from './ChatWindow';
-import { Zap, MessageSquare, Target, Brain, FileText, Clock, DollarSign } from 'lucide-react';
+import { Zap, MessageSquare, Target, Brain, FileText, Clock, Hash } from 'lucide-react';
 
 interface ResponseBadgesProps {
   metadata?: ResponseMetadata;
@@ -16,8 +16,8 @@ const ResponseBadges: React.FC<ResponseBadgesProps> = ({ metadata }) => {
     modelTier,
     routingPath,
     summarizationTriggered,
-    estimatedCost,
     latencyMs,
+    tokenUsage,
   } = metadata;
 
   const badges = [];
@@ -74,19 +74,29 @@ const ResponseBadges: React.FC<ResponseBadgesProps> = ({ metadata }) => {
     });
   }
 
-  // Cost badge
-  if (estimatedCost !== undefined) {
-    const costDisplay = estimatedCost < 0.0001 
-      ? '<$0.0001' 
-      : `$${estimatedCost.toFixed(4)}`;
+  // Token usage badge
+  if (tokenUsage && (tokenUsage.inputTokens > 0 || tokenUsage.outputTokens > 0)) {
+    const formatTokenCount = (count: number): string => {
+      if (count >= 1000000) {
+        return `${(count / 1000000).toFixed(1)}M`;
+      } else if (count >= 1000) {
+        return `${(count / 1000).toFixed(1)}K`;
+      }
+      return count.toString();
+    };
+
+    const inputDisplay = formatTokenCount(tokenUsage.inputTokens);
+    const outputDisplay = formatTokenCount(tokenUsage.outputTokens);
     
     badges.push({
-      icon: <DollarSign size={12} />,
-      label: costDisplay,
+      icon: <Hash size={12} />,
+      label: `${inputDisplay} / ${outputDisplay}`,
       color: cacheHit 
         ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
         : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300',
-      tooltip: cacheHit ? 'Free - served from cache!' : `Estimated cost: ${costDisplay}`,
+      tooltip: cacheHit 
+        ? 'Cached - no tokens used!' 
+        : `Input: ${tokenUsage.inputTokens.toLocaleString()} tokens, Output: ${tokenUsage.outputTokens.toLocaleString()} tokens`,
     });
   }
 

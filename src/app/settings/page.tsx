@@ -165,6 +165,7 @@ const Page = () => {
   const [measureUnit, setMeasureUnit] = useState<'Imperial' | 'Metric'>(
     'Metric',
   );
+  const [maxHistoryTurns, setMaxHistoryTurns] = useState<number>(2);
   const [savingStates, setSavingStates] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
@@ -229,6 +230,11 @@ const Page = () => {
 
       setMeasureUnit(
         localStorage.getItem('measureUnit')! as 'Imperial' | 'Metric',
+      );
+
+      const storedMaxHistoryTurns = localStorage.getItem('maxHistoryTurns');
+      setMaxHistoryTurns(
+        storedMaxHistoryTurns ? parseInt(storedMaxHistoryTurns, 10) : 2
       );
 
       setIsLoading(false);
@@ -391,6 +397,8 @@ const Page = () => {
         localStorage.setItem('systemInstructions', value);
       } else if (key === 'measureUnit') {
         localStorage.setItem('measureUnit', value.toString());
+      } else if (key === 'maxHistoryTurns') {
+        localStorage.setItem('maxHistoryTurns', value.toString());
       }
     } catch (err) {
       console.error('Failed to save:', err);
@@ -572,6 +580,39 @@ const Page = () => {
                   }}
                   onSave={(value) => saveConfig('systemInstructions', value)}
                 />
+              </div>
+            </SettingsSection>
+
+            <SettingsSection title="Conversation History">
+              <div className="flex flex-col space-y-4">
+                <div className="flex flex-col space-y-1">
+                  <p className="text-black/70 dark:text-white/70 text-sm">
+                    Max History Turns
+                  </p>
+                  <p className="text-black/50 dark:text-white/50 text-xs">
+                    Number of conversation turns (user-assistant pairs) to include in context. Higher values use more tokens but provide more context. (Range: 1-50, Default: 2)
+                  </p>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="50"
+                    placeholder="2"
+                    value={maxHistoryTurns.toString()}
+                    isSaving={savingStates['maxHistoryTurns']}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value, 10);
+                      if (!isNaN(value) && value >= 1 && value <= 50) {
+                        setMaxHistoryTurns(value);
+                      }
+                    }}
+                    onSave={(value) => {
+                      const numValue = parseInt(value, 10);
+                      if (!isNaN(numValue) && numValue >= 1 && numValue <= 50) {
+                        saveConfig('maxHistoryTurns', numValue);
+                      }
+                    }}
+                  />
+                </div>
               </div>
             </SettingsSection>
 

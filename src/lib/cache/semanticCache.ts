@@ -36,7 +36,7 @@ export class SemanticCache {
   
   constructor(
     embeddings: Embeddings,
-    similarityThreshold: number = 0.95,
+    similarityThreshold: number = 0.90, // Lowered from 0.95 for better cache hits
     maxCacheSize: number = 1000
   ) {
     this.embeddings = embeddings;
@@ -56,8 +56,10 @@ export class SemanticCache {
     // Search for similar cached queries
     let bestMatch: { entry: CacheEntry; similarity: number } | null = null;
     
+    let maxSimilarity = 0;
     for (const entry of this.cache.values()) {
       const similarity = computeSimilarity(queryEmbedding, entry.queryEmbedding);
+      maxSimilarity = Math.max(maxSimilarity, similarity);
       
       if (similarity >= this.similarityThreshold) {
         if (!bestMatch || similarity > bestMatch.similarity) {
@@ -71,12 +73,14 @@ export class SemanticCache {
       bestMatch.entry.hitCount++;
       this.totalHits++;
       
-      console.log(`[SemanticCache] Cache HIT (similarity: ${bestMatch.similarity.toFixed(3)}) for query: "${query}"`);
-      
+      console.log(`[Cache] HIT (${(bestMatch.similarity * 100).toFixed(1)}%): "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}"`);
       return bestMatch.entry;
     }
     
-    console.log(`[SemanticCache] Cache MISS for query: "${query}"`);
+    // Only log miss if cache has entries (to avoid spam on empty cache)
+    if (this.cache.size > 0) {
+      console.log(`[Cache] MISS (${(maxSimilarity * 100).toFixed(1)}%): "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}"`);
+    }
     return null;
   }
   
@@ -105,7 +109,10 @@ export class SemanticCache {
     
     this.cache.set(cacheKey, entry);
     
-    console.log(`[SemanticCache] Cached response for query: "${query}"`);
+    // Only log if cache is getting full
+    if (this.cache.size % 10 === 0 || this.cache.size >= this.maxCacheSize * 0.9) {
+      console.log(`[Cache] Stored (${this.cache.size}/${this.maxCacheSize}): "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}"`);
+    }
   }
   
   /**
@@ -156,3 +163,29 @@ export class SemanticCache {
 }
 
 export default SemanticCache;
+
+/**
+ * Global cache instance - shared across all requests
+ * This ensures cache persists between API calls
+ */
+let globalCacheInstance: SemanticCache | null = null;
+
+/**
+ * Get or create the global semantic cache instance
+ */
+export function getGlobalSemanticCache(embeddings: Embeddings): SemanticCache {
+  if (!globalCacheInstance) {
+    globalCacheInstance = new SemanticCache(embeddings);
+  }
+  return globalCacheInstance;
+}
+
+/**
+ * Clear the global cache instance (useful for testing)
+ */
+export function clearGlobalSemanticCache(): void {
+  if (globalCacheInstance) {
+    globalCacheInstance.clear();
+  }
+  globalCacheInstance = null;
+}

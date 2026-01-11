@@ -19,6 +19,7 @@ import {
 import { searchHandlers } from '@/lib/search';
 import { prependLanguageInstruction } from '@/lib/prompts';
 import { StatefulOrchestrator } from '@/lib/orchestration/statefulOrchestrator';
+import { OrchestrationService } from '@/lib/orchestration/orchestrationService';
 import { z } from 'zod';
 
 export const runtime = 'nodejs';
@@ -63,6 +64,7 @@ const bodySchema = z.object({
   embeddingModel: embeddingModelSchema.optional().default({}),
   systemInstructions: z.string().nullable().optional().default(''),
   language: z.string().optional().default('en'),
+  maxHistoryTurns: z.number().int().min(1).max(50).optional().default(2),
 });
 
 type Message = z.infer<typeof messageSchema>;
@@ -98,59 +100,91 @@ const handleEmitterEvents = async (
 
   const startTime = Date.now();
   let sourcesReceived = false;
+  let responseMetadata: any = null; // Store metadata from orchestrator
 
   stream.on('data', (data) => {
-    const parsedData = JSON.parse(data);
-    if (parsedData.type === 'response') {
-      writer.write(
-        encoder.encode(
-          JSON.stringify({
-            type: 'message',
-            data: parsedData.data,
-            messageId: aiMessageId,
-          }) + '\n',
-        ),
-      );
+    try {
+      const parsedData = JSON.parse(data);
+      
+      if (parsedData.type === 'response') {
+        writer.write(
+          encoder.encode(
+            JSON.stringify({
+              type: 'message',
+              data: parsedData.data,
+              messageId: aiMessageId,
+            }) + '\n',
+          ),
+        ).catch((err) => {
+          // Ignore ResponseAborted errors - client disconnected
+          if (err?.name !== 'ResponseAborted') {
+            console.error('[Chat] Error writing response:', err);
+          }
+        });
 
-      recievedMessage += parsedData.data;
-    } else if (parsedData.type === 'sources') {
-      sourcesReceived = true;
-      writer.write(
-        encoder.encode(
-          JSON.stringify({
-            type: 'sources',
-            data: parsedData.data,
-            messageId: aiMessageId,
-          }) + '\n',
-        ),
-      );
+        recievedMessage += parsedData.data;
+        
+        // Capture metadata from orchestrator if available
+        if (parsedData.metadata) {
+          responseMetadata = { ...responseMetadata, ...parsedData.metadata };
+        }
+      } else if (parsedData.type === 'metadata') {
+        // Capture final metadata with cost and token usage
+        if (parsedData.data) {
+          responseMetadata = { ...responseMetadata, ...parsedData.data };
+        }
+      } else if (parsedData.type === 'sources') {
+        sourcesReceived = true;
+        writer.write(
+          encoder.encode(
+            JSON.stringify({
+              type: 'sources',
+              data: parsedData.data,
+              messageId: aiMessageId,
+            }) + '\n',
+          ),
+        ).catch((err) => {
+          // Ignore ResponseAborted errors - client disconnected
+          if (err?.name !== 'ResponseAborted') {
+            console.error('[Chat] Error writing sources:', err);
+          }
+        });
 
-      const sourceMessageId = crypto.randomBytes(7).toString('hex');
+        const sourceMessageId = crypto.randomBytes(7).toString('hex');
 
-      db.insert(messagesSchema)
-        .values({
-          chatId: chatId,
-          messageId: sourceMessageId,
-          role: 'source',
-          sources: parsedData.data,
-          createdAt: new Date().toString(),
-        })
-        .execute();
+        db.insert(messagesSchema)
+          .values({
+            chatId: chatId,
+            messageId: sourceMessageId,
+            role: 'source',
+            sources: parsedData.data,
+            createdAt: new Date().toString(),
+          })
+          .execute();
+      }
+    } catch (error) {
+      console.error('[Chat] Error handling stream data:', error, 'Data:', data);
     }
   });
   stream.on('end', () => {
     const endTime = Date.now();
     const latencyMs = endTime - startTime;
     
-    // Calculate basic metadata
-    const metadata = {
-      modelTier: 'tier1' as const, // Basic handler uses tier1
+    // Use metadata from orchestrator if available, otherwise use defaults
+    const metadata = responseMetadata || {
+      modelTier: 'tier1' as const,
       routingPath: sourcesReceived ? 'rag-tier1' as const : 'canned' as const,
-      estimatedCost: sourcesReceived ? 0.0008 : 0.0003, // Rough estimates
+      estimatedCost: sourcesReceived ? 0.0008 : 0.0003,
       latencyMs: latencyMs,
       cacheHit: false,
     };
+    
+    // Ensure latencyMs is set
+    if (!metadata.latencyMs) {
+      metadata.latencyMs = latencyMs;
+    }
 
+    // Check if writer is still open before writing
     writer.write(
       encoder.encode(
         JSON.stringify({
@@ -158,8 +192,31 @@ const handleEmitterEvents = async (
           metadata: metadata,
         }) + '\n',
       ),
-    );
-    writer.close();
+    ).then(() => {
+      // Only close if not already closed
+      try {
+        writer.close();
+      } catch (err: any) {
+        // Ignore if already closed
+        if (err?.code !== 'ERR_INVALID_STATE') {
+          console.error('[Chat] Error closing writer:', err);
+        }
+      }
+    }).catch((err) => {
+      // Ignore ResponseAborted errors - client disconnected
+      if (err?.name !== 'ResponseAborted') {
+        console.error('[Chat] Error writing messageEnd:', err);
+      }
+      // Only try to close if not already closed
+      try {
+        writer.close();
+      } catch (closeErr: any) {
+        // Ignore if already closed
+        if (closeErr?.code !== 'ERR_INVALID_STATE') {
+          console.error('[Chat] Error closing writer:', closeErr);
+        }
+      }
+    });
 
     db.insert(messagesSchema)
       .values({
@@ -171,17 +228,57 @@ const handleEmitterEvents = async (
       })
       .execute();
   });
-  stream.on('error', (data) => {
-    const parsedData = JSON.parse(data);
-    writer.write(
-      encoder.encode(
-        JSON.stringify({
-          type: 'error',
-          data: parsedData.data,
-        }),
-      ),
-    );
-    writer.close();
+  stream.on('error', (error) => {
+    console.error('[Chat] Stream error:', error);
+    try {
+      const errorData = typeof error === 'string' ? JSON.parse(error) : { data: String(error) };
+      writer.write(
+        encoder.encode(
+          JSON.stringify({
+            type: 'error',
+            data: errorData.data || String(error),
+          }) + '\n',
+        ),
+      ).catch((err) => {
+        // Ignore ResponseAborted errors
+        if (err?.name !== 'ResponseAborted') {
+          console.error('[Chat] Error writing error message:', err);
+        }
+      }).finally(() => {
+        // Only close if not already closed
+        try {
+          writer.close();
+        } catch (closeErr: any) {
+          if (closeErr?.code !== 'ERR_INVALID_STATE') {
+            console.error('[Chat] Error closing writer on error:', closeErr);
+          }
+        }
+      });
+    } catch (err) {
+      console.error('[Chat] Error parsing error data:', err);
+      writer.write(
+        encoder.encode(
+          JSON.stringify({
+            type: 'error',
+            data: String(error),
+          }) + '\n',
+        ),
+      ).catch((writeErr) => {
+        // Ignore ResponseAborted errors
+        if (writeErr?.name !== 'ResponseAborted') {
+          console.error('[Chat] Error writing error message:', writeErr);
+        }
+      }).finally(() => {
+        // Only close if not already closed
+        try {
+          writer.close();
+        } catch (closeErr: any) {
+          if (closeErr?.code !== 'ERR_INVALID_STATE') {
+            console.error('[Chat] Error closing writer on error:', closeErr);
+          }
+        }
+      });
+    }
   });
 };
 
@@ -345,48 +442,32 @@ export const POST = async (req: Request) => {
     }
 
     // Prepend language-specific system prompt to existing instructions
-    console.log('[Multilingual] Language received:', body.language);
     const systemInstructionsWithLanguage = prependLanguageInstruction(
       body.language,
       body.systemInstructions as string,
     );
-    console.log('[Multilingual] System instructions:', systemInstructionsWithLanguage);
 
-    // Use stateful orchestrator for advanced context management
-    const useStatefulOrchestration = false; // Temporarily disabled - streaming issue
+    // Use OrchestrationService for intelligent routing and tiering
+    const orchestrator = new OrchestrationService(handler, embedding);
     
-    let stream: any;
-    
-    if (useStatefulOrchestration) {
-      console.log('[Chat] Using stateful orchestration');
-      const orchestrator = new StatefulOrchestrator(handler, embedding);
-      stream = await orchestrator.handleQuery(
-        message.content,
-        message.chatId,
-        history,
-        llm,
-        embedding,
-        body.optimizationMode,
-        body.files,
-        systemInstructionsWithLanguage,
-      );
-    } else {
-      console.log('[Chat] Using basic search handler');
-      stream = await handler.searchAndAnswer(
-        message.content,
-        history,
-        llm,
-        embedding,
-        body.optimizationMode,
-        body.files,
-        systemInstructionsWithLanguage,
-      );
-    }
-
     const responseStream = new TransformStream();
     const writer = responseStream.writable.getWriter();
     const encoder = new TextEncoder();
 
+    // Set up event handlers BEFORE starting the query
+    const maxHistoryTurns = body.maxHistoryTurns ?? 2;
+    const stream = await orchestrator.handleQuery(
+      message.content,
+      history,
+      llm,
+      embedding,
+      body.optimizationMode,
+      body.files,
+      systemInstructionsWithLanguage,
+      maxHistoryTurns
+    );
+
+    // Attach event listeners immediately
     handleEmitterEvents(stream, writer, encoder, message.chatId);
     handleHistorySave(message, humanMessageId, body.focusMode, body.files);
 

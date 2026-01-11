@@ -3,11 +3,14 @@ import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { Embeddings } from '@langchain/core/embeddings';
 import EventEmitter from 'events';
 import { FrugalRouter, RoutingPath } from '../routing/frugalRouter';
-import { SemanticCache } from '../cache/semanticCache';
+import { SemanticCache, getGlobalSemanticCache } from '../cache/semanticCache';
 import { MetaSearchAgentType } from '../search/metaSearchAgent';
 import { Document } from 'langchain/document';
 import { globalMetricsTracker } from '../metrics/metricsTracker';
 import { getAnalyticsTracker } from '../analytics/analyticsTracker';
+import { getTierConfig } from '../models/tierConfig';
+import { getAvailableChatModelProviders, ChatModel } from '../providers';
+import { calculateCost } from '../context/contextPayload';
 
 export interface OrchestrationMetrics {
   routingPath: RoutingPath;
@@ -38,7 +41,8 @@ export class OrchestrationService {
     embeddings: Embeddings
   ) {
     this.frugalRouter = new FrugalRouter();
-    this.semanticCache = new SemanticCache(embeddings);
+    // Use global cache instance so cache persists across requests
+    this.semanticCache = getGlobalSemanticCache(embeddings);
     this.ragAgent = ragAgent;
   }
   
@@ -52,7 +56,8 @@ export class OrchestrationService {
     embeddings: Embeddings,
     optimizationMode: 'speed' | 'balanced' | 'quality',
     fileIds: string[],
-    systemInstructions: string
+    systemInstructions: string,
+    maxHistoryTurns: number = 2
   ): Promise<EventEmitter> {
     const emitter = new EventEmitter();
     const startTime = Date.now();
@@ -70,6 +75,7 @@ export class OrchestrationService {
           break;
           
         case 'cache':
+          // Medium queries: check cache first, then tier1 if miss
           await this.handleCacheQuery(
             query,
             history,
@@ -78,13 +84,16 @@ export class OrchestrationService {
             optimizationMode,
             fileIds,
             systemInstructions,
+            'tier1',
             emitter,
-            startTime
+            startTime,
+            maxHistoryTurns
           );
           break;
           
         case 'rag-tier1':
         case 'rag-tier2':
+          // Simple/complex queries: go directly to LLM (skip cache)
           await this.handleRAGQuery(
             query,
             history,
@@ -95,7 +104,9 @@ export class OrchestrationService {
             systemInstructions,
             routingDecision.path === 'rag-tier2' ? 'tier2' : 'tier1',
             emitter,
-            startTime
+            startTime,
+            true, // skipCache = true for direct routing
+            maxHistoryTurns
           );
           break;
       }
@@ -119,37 +130,43 @@ export class OrchestrationService {
     
     if (response) {
       const latencyMs = Date.now() - startTime;
+      const estimatedCost = 0; // Canned responses are free
       
-      // Emit as a complete response
-      emitter.emit('data', JSON.stringify({
-        type: 'sources',
-        data: [],
-      }));
-      
-      emitter.emit('data', JSON.stringify({
-        type: 'response',
-        data: response,
-        metadata: {
-          cacheHit: false,
+      // Use setImmediate to ensure listeners are attached first
+      setImmediate(() => {
+        // Emit as a complete response
+        emitter.emit('data', JSON.stringify({
+          type: 'sources',
+          data: [],
+        }));
+        
+        emitter.emit('data', JSON.stringify({
+          type: 'response',
+          data: response,
+          metadata: {
+            cacheHit: false,
+            routingPath: 'canned',
+            latencyMs,
+            estimatedCost,
+          },
+        }));
+        
+        // Log metrics
+        globalMetricsTracker.logQuery({
+          timestamp: Date.now(),
+          query,
           routingPath: 'canned',
+          cacheHit: false,
           latencyMs,
-        },
-      }));
-      
-      // Log metrics
-      globalMetricsTracker.logQuery({
-        timestamp: Date.now(),
-        query,
-        routingPath: 'canned',
-        cacheHit: false,
-        latencyMs,
+          estimatedCost,
+        });
+        
+        // Track analytics - canned responses use tier1 (minimal cost)
+        const analytics = getAnalyticsTracker();
+        analytics.trackModelUse(1);
+        
+        emitter.emit('end');
       });
-      
-      // Track analytics - canned responses use tier1 (minimal cost)
-      const analytics = getAnalyticsTracker();
-      analytics.trackModelUse(1);
-      
-      emitter.emit('end');
     } else {
       // Fallback to cache if no canned response found
       await this.handleCacheQuery(
@@ -160,6 +177,7 @@ export class OrchestrationService {
         'balanced',
         [],
         '',
+        'tier1', // Default to tier1 for fallback
         emitter,
         startTime
       );
@@ -177,48 +195,55 @@ export class OrchestrationService {
     optimizationMode: 'speed' | 'balanced' | 'quality',
     fileIds: string[],
     systemInstructions: string,
+    intendedTier: 'tier1' | 'tier2',
     emitter: EventEmitter,
-    startTime: number
+    startTime: number,
+    maxHistoryTurns: number = 2
   ): Promise<void> {
-    // Check cache
+    // Check cache first
     const cached = await this.semanticCache.get(query);
     
     if (cached) {
       const latencyMs = Date.now() - startTime;
+      const estimatedCost = 0; // Cache hits are free
       
-      // Cache hit - return cached response
-      emitter.emit('data', JSON.stringify({
-        type: 'sources',
-        data: cached.sources,
-      }));
-      
-      emitter.emit('data', JSON.stringify({
-        type: 'response',
-        data: cached.response,
-        metadata: {
-          cacheHit: true,
+      // Use setImmediate to ensure listeners are attached first
+      setImmediate(() => {
+        // Cache hit - return cached response
+        emitter.emit('data', JSON.stringify({
+          type: 'sources',
+          data: cached.sources,
+        }));
+        
+        emitter.emit('data', JSON.stringify({
+          type: 'response',
+          data: cached.response,
+          metadata: {
+            cacheHit: true,
+            routingPath: 'cache',
+            latencyMs,
+            estimatedCost,
+          },
+        }));
+        
+        // Log metrics
+        globalMetricsTracker.logQuery({
+          timestamp: Date.now(),
+          query,
           routingPath: 'cache',
+          cacheHit: true,
           latencyMs,
-        },
-      }));
-      
-      // Log metrics
-      globalMetricsTracker.logQuery({
-        timestamp: Date.now(),
-        query,
-        routingPath: 'cache',
-        cacheHit: true,
-        latencyMs,
+          estimatedCost,
+        });
+        
+        // Track analytics - cache hits don't use any model
+        const analytics = getAnalyticsTracker();
+        analytics.trackModelUse(1);
+        
+        emitter.emit('end');
       });
-      
-      // Track analytics - cache hits don't use any model
-      // We'll count them as tier1 for cost savings calculation
-      const analytics = getAnalyticsTracker();
-      analytics.trackModelUse(1);
-      
-      emitter.emit('end');
     } else {
-      // Cache miss - fall through to RAG with tier1
+      // Cache miss - fall through to RAG with intended tier
       await this.handleRAGQuery(
         query,
         history,
@@ -227,9 +252,11 @@ export class OrchestrationService {
         optimizationMode,
         fileIds,
         systemInstructions,
-        'tier1',
+        intendedTier,
         emitter,
-        startTime
+        startTime,
+        false, // skipCache = false for cache query path
+        maxHistoryTurns
       );
     }
   }
@@ -248,17 +275,87 @@ export class OrchestrationService {
     systemInstructions: string,
     modelTier: 'tier1' | 'tier2',
     emitter: EventEmitter,
-    startTime: number
+    startTime: number,
+    skipCache: boolean = false,
+    maxHistoryTurns: number = 2
   ): Promise<void> {
-    // Note: In a full implementation, we would select different LLM instances
-    // based on modelTier. For now, we use the provided LLM and track the tier
-    // for metrics and cost calculation.
+    // Only check cache if not skipping (for medium queries via handleCacheQuery)
+    if (!skipCache) {
+      const cached = await this.semanticCache.get(query);
+      
+      if (cached) {
+        const latencyMs = Date.now() - startTime;
+        
+        setImmediate(() => {
+          const estimatedCost = 0; // Cache hits are free
+          emitter.emit('data', JSON.stringify({
+            type: 'sources',
+            data: cached.sources,
+          }));
+          
+          emitter.emit('data', JSON.stringify({
+            type: 'response',
+            data: cached.response,
+            metadata: {
+              cacheHit: true,
+              routingPath: modelTier === 'tier2' ? 'rag-tier2' : 'rag-tier1',
+              modelTier,
+              latencyMs,
+              estimatedCost,
+            },
+          }));
+          
+          globalMetricsTracker.logQuery({
+            timestamp: Date.now(),
+            query,
+            routingPath: modelTier === 'tier2' ? 'rag-tier2' : 'rag-tier1',
+            cacheHit: true,
+            modelTier,
+            latencyMs,
+            estimatedCost,
+          });
+          
+          const analytics = getAnalyticsTracker();
+          analytics.trackModelUse(modelTier === 'tier2' ? 2 : 1);
+          
+          emitter.emit('end');
+        });
+        return; // Early return on cache hit
+      }
+    }
     
-    // Use existing RAG agent
+    // Proceed with RAG (cache skipped or miss)
+    // Select the appropriate model based on tier
+    let tierLLM = llm; // Default to provided LLM
+    
+    try {
+      const tierConfig = getTierConfig(modelTier);
+      
+      // Get available model providers
+      const modelProviders = await getAvailableChatModelProviders();
+      
+      // Try to get the tier-specific model
+      if (modelProviders[tierConfig.provider] && 
+          modelProviders[tierConfig.provider][tierConfig.modelName]) {
+        tierLLM = modelProviders[tierConfig.provider][tierConfig.modelName].model as BaseChatModel;
+      } else {
+        console.warn(`[Orchestration] Tier ${modelTier} model (${tierConfig.modelName}) not available, using default`);
+      }
+    } catch (error) {
+      console.error(`[Orchestration] Error selecting tier model:`, error);
+      // Fall back to provided LLM
+    }
+    
+    // Limit history to last N turns (each turn = user + assistant = 2 messages)
+    const limitedHistory = maxHistoryTurns > 0 
+      ? history.slice(-maxHistoryTurns * 2)
+      : history;
+    
+    // Use existing RAG agent with tier-specific model
     const ragEmitter = await this.ragAgent.searchAndAnswer(
       query,
-      history,
-      llm,
+      limitedHistory,
+      tierLLM,
       embeddings,
       optimizationMode,
       fileIds,
@@ -267,6 +364,7 @@ export class OrchestrationService {
     
     let fullResponse = '';
     let sources: Document[] = [];
+    let tokenUsage: { inputTokens: number; outputTokens: number } | null = null;
     
     // Forward events from RAG agent to our emitter
     ragEmitter.on('data', (data: string) => {
@@ -292,6 +390,11 @@ export class OrchestrationService {
             type: 'sources',
             data: parsedData.data,
           }));
+        } else if (parsedData.type === 'tokenUsage' && parsedData.data) {
+          // Capture token usage from Ollama
+          const usage = parsedData.data as { inputTokens: number; outputTokens: number };
+          tokenUsage = usage;
+          console.log(`[Orchestration] Captured token usage: ${usage.inputTokens} input, ${usage.outputTokens} output`);
         }
       } catch (error) {
         console.error('[Orchestration] Error parsing RAG data:', error);
@@ -305,9 +408,36 @@ export class OrchestrationService {
       }
       
       const latencyMs = Date.now() - startTime;
+      
+      // Calculate cost from actual token usage if available
+      let estimatedCost: number | undefined;
+      if (tokenUsage) {
+        estimatedCost = calculateCost(tokenUsage.inputTokens, tokenUsage.outputTokens, modelTier);
+        console.log(`[Orchestration] Calculated cost: $${estimatedCost.toFixed(6)} from ${tokenUsage.inputTokens} input + ${tokenUsage.outputTokens} output tokens`);
+      }
+      
       console.log(`[Orchestration] Query completed in ${latencyMs}ms (${modelTier})`);
       
-      // Log metrics
+      // Emit final metadata with cost
+      if (estimatedCost !== undefined) {
+        emitter.emit('data', JSON.stringify({
+          type: 'metadata',
+          data: {
+            estimatedCost,
+            modelTier,
+            routingPath: modelTier === 'tier2' ? 'rag-tier2' : 'rag-tier1',
+            cacheHit: false,
+            latencyMs,
+            tokenUsage: tokenUsage ? {
+              inputTokens: tokenUsage.inputTokens,
+              outputTokens: tokenUsage.outputTokens,
+              totalTokens: tokenUsage.inputTokens + tokenUsage.outputTokens,
+            } : undefined,
+          },
+        }));
+      }
+      
+      // Log metrics with actual cost
       globalMetricsTracker.logQuery({
         timestamp: Date.now(),
         query,
@@ -315,11 +445,21 @@ export class OrchestrationService {
         cacheHit: false,
         modelTier,
         latencyMs,
+        estimatedCost,
       });
       
-      // Track analytics
+      // Track analytics with actual token usage if available
       const analytics = getAnalyticsTracker();
       analytics.trackModelUse(modelTier === 'tier2' ? 2 : 1);
+      
+      if (tokenUsage) {
+        analytics.trackTokens(
+          tokenUsage.inputTokens, 
+          tokenUsage.outputTokens, 
+          modelTier === 'tier2' ? 'tier2' : 'tier1'
+        );
+        console.log(`[Orchestration] Tracked ${tokenUsage.inputTokens + tokenUsage.outputTokens} tokens for analytics`);
+      }
       
       emitter.emit('end');
     });

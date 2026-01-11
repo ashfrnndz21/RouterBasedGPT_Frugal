@@ -168,10 +168,11 @@ export function calculateCost(
   modelTier: 'tier1' | 'tier2'
 ): number {
   // Cost per 1M tokens (adjust based on actual provider pricing)
-  const TIER1_INPUT_COST = 0.00015; // $0.15 per 1M input tokens
-  const TIER1_OUTPUT_COST = 0.0006; // $0.60 per 1M output tokens
-  const TIER2_INPUT_COST = 0.0003; // $0.30 per 1M input tokens
-  const TIER2_OUTPUT_COST = 0.0015; // $1.50 per 1M output tokens
+  // Values are in dollars per 1M tokens
+  const TIER1_INPUT_COST = 0.15; // $0.15 per 1M input tokens
+  const TIER1_OUTPUT_COST = 0.60; // $0.60 per 1M output tokens
+  const TIER2_INPUT_COST = 0.30; // $0.30 per 1M input tokens
+  const TIER2_OUTPUT_COST = 1.50; // $1.50 per 1M output tokens
   
   const inputCost = modelTier === 'tier1' ? TIER1_INPUT_COST : TIER2_INPUT_COST;
   const outputCost = modelTier === 'tier1' ? TIER1_OUTPUT_COST : TIER2_OUTPUT_COST;

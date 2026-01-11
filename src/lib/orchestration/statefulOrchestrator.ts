@@ -12,7 +12,7 @@ import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { Embeddings } from '@langchain/core/embeddings';
 import EventEmitter from 'events';
 import { FrugalRouter, RoutingPath } from '../routing/frugalRouter';
-import { SemanticCache } from '../cache/semanticCache';
+import { SemanticCache, getGlobalSemanticCache } from '../cache/semanticCache';
 import { MetaSearchAgentType } from '../search/metaSearchAgent';
 import { getContextStore } from '../context/contextStore';
 import {
@@ -34,6 +34,8 @@ import {
 import { summarizeConversation } from '../context/conversationSummarizer';
 import { globalMetricsTracker } from '../metrics/metricsTracker';
 import { getAnalyticsTracker } from '../analytics/analyticsTracker';
+import { getTierConfig } from '../models/tierConfig';
+import { getAvailableChatModelProviders } from '../providers';
 
 export interface StatefulOrchestrationMetrics {
   routingPath: RoutingPath;
@@ -60,7 +62,8 @@ export class StatefulOrchestrator {
     embeddings: Embeddings
   ) {
     this.frugalRouter = new FrugalRouter();
-    this.semanticCache = new SemanticCache(embeddings);
+    // Use global cache instance so cache persists across requests
+    this.semanticCache = getGlobalSemanticCache(embeddings);
     this.ragAgent = ragAgent;
   }
   
@@ -75,7 +78,8 @@ export class StatefulOrchestrator {
     embeddings: Embeddings,
     optimizationMode: 'speed' | 'balanced' | 'quality',
     fileIds: string[],
-    systemInstructions: string
+    systemInstructions: string,
+    maxHistoryTurns: number = 2
   ): Promise<EventEmitter> {
     const emitter = new EventEmitter();
     const startTime = Date.now();
@@ -86,15 +90,11 @@ export class StatefulOrchestrator {
       let contextPayload = await this.contextStore.get(sessionId);
       
       if (!contextPayload) {
-        console.log(`[StatefulOrchestrator] Creating new context for session: ${sessionId}`);
         contextPayload = createContextPayload(sessionId, chatId, query);
-      } else {
-        console.log(`[StatefulOrchestrator] Loaded existing context for session: ${sessionId}`);
       }
       
       // STEP 2: Route the query
       const routingDecision = await this.frugalRouter.route(query, history);
-      console.log(`[StatefulOrchestrator] Routing: ${routingDecision.path} (confidence: ${routingDecision.confidence})`);
       
       // STEP 3: Extract entities from the query
       const newEntities = extractEntities(query, contextPayload.turnCount + 1);
@@ -102,7 +102,6 @@ export class StatefulOrchestrator {
         contextPayload.extractedEntities,
         newEntities
       );
-      console.log(`[StatefulOrchestrator] Extracted ${newEntities.size} entities`);
       
       // STEP 4: Handle based on routing path
       let response: string;
@@ -124,7 +123,8 @@ export class StatefulOrchestrator {
             embeddings,
             optimizationMode,
             fileIds,
-            systemInstructions
+            systemInstructions,
+            maxHistoryTurns
           ));
           break;
           
@@ -140,7 +140,8 @@ export class StatefulOrchestrator {
             optimizationMode,
             fileIds,
             systemInstructions,
-            modelTier
+            modelTier,
+            maxHistoryTurns
           ));
           break;
       }
@@ -169,7 +170,6 @@ export class StatefulOrchestrator {
       // STEP 6: Check if summarization is needed
       let summarizationTriggered = false;
       if (needsSummarization(contextPayload, 5)) {
-        console.log('[StatefulOrchestrator] Triggering conversation summarization');
         const turnsToSummarize = contextPayload.conversationHistory.slice(
           contextPayload.lastSummarizedTurn
         );
@@ -201,7 +201,6 @@ export class StatefulOrchestrator {
       
       // STEP 8: Save updated context
       await this.contextStore.set(sessionId, contextPayload);
-      console.log(`[StatefulOrchestrator] Saved context for session: ${sessionId}`);
       
       // STEP 9: Emit response
       const latencyMs = Date.now() - startTime;
@@ -275,7 +274,8 @@ export class StatefulOrchestrator {
     embeddings: Embeddings,
     optimizationMode: 'speed' | 'balanced' | 'quality',
     fileIds: string[],
-    systemInstructions: string
+    systemInstructions: string,
+    maxHistoryTurns: number = 2
   ): Promise<{
     response: string;
     sources: any[];
@@ -285,7 +285,6 @@ export class StatefulOrchestrator {
     const cached = await this.semanticCache.get(query);
     
     if (cached) {
-      console.log('[StatefulOrchestrator] Cache hit!');
       return {
         response: cached.response,
         sources: cached.sources,
@@ -294,7 +293,6 @@ export class StatefulOrchestrator {
     }
     
     // Cache miss - fall through to RAG
-    console.log('[StatefulOrchestrator] Cache miss, falling back to RAG');
     const result = await this.handleRAGQuery(
       query,
       contextPayload,
@@ -304,7 +302,8 @@ export class StatefulOrchestrator {
       optimizationMode,
       fileIds,
       systemInstructions,
-      'tier1'
+      'tier1',
+      maxHistoryTurns
     );
     
     return { ...result, cacheHit: false };
@@ -322,13 +321,45 @@ export class StatefulOrchestrator {
     optimizationMode: 'speed' | 'balanced' | 'quality',
     fileIds: string[],
     systemInstructions: string,
-    modelTier: 'tier1' | 'tier2'
+    modelTier: 'tier1' | 'tier2',
+    maxHistoryTurns: number = 2
   ): Promise<{
     response: string;
     sources: any[];
   }> {
+    // Check cache first
+    const cached = await this.semanticCache.get(query);
+    
+    if (cached) {
+      return {
+        response: cached.response,
+        sources: cached.sources,
+      };
+    }
+    
+    // Select the appropriate model based on tier
+    let tierLLM = llm; // Default to provided LLM
+    
+    try {
+      const tierConfig = getTierConfig(modelTier);
+      
+      // Get available model providers
+      const modelProviders = await getAvailableChatModelProviders();
+      
+      // Try to get the tier-specific model
+      if (modelProviders[tierConfig.provider] && 
+          modelProviders[tierConfig.provider][tierConfig.modelName]) {
+        tierLLM = modelProviders[tierConfig.provider][tierConfig.modelName].model as BaseChatModel;
+      } else {
+        console.warn(`[StatefulOrchestrator] Tier ${modelTier} model (${tierConfig.modelName}) not available, using default`);
+      }
+    } catch (error) {
+      console.error(`[StatefulOrchestrator] Error selecting tier model:`, error);
+      // Fall back to provided LLM
+    }
+    
     // Get compact context for LLM
-    const compactContext = getCompactContext(contextPayload, 2);
+    const compactContext = getCompactContext(contextPayload, maxHistoryTurns);
     const relevantEntities = getRelevantEntities(
       contextPayload.extractedEntities,
       contextPayload.turnCount
@@ -336,9 +367,8 @@ export class StatefulOrchestrator {
     
     // Enhance query with entities for better RAG retrieval
     const enhancedQuery = enhanceQueryWithEntities(query, relevantEntities);
-    console.log(`[StatefulOrchestrator] Enhanced query: ${enhancedQuery}`);
     
-    // Build minimal context history (summary + last 2 turns)
+    // Build minimal context history (summary + last N turns, where N = maxHistoryTurns)
     const minimalHistory: BaseMessage[] = [];
     
     if (compactContext.summary) {
@@ -362,11 +392,11 @@ export class StatefulOrchestrator {
         ? `\n\nContext entities being tracked:\n${formatEntitiesForPrompt(relevantEntities)}`
         : '');
     
-    // Execute RAG with minimal context
+    // Execute RAG with minimal context and tier-specific model
     const ragEmitter = await this.ragAgent.searchAndAnswer(
       enhancedQuery,
       minimalHistory,
-      llm,
+      tierLLM,
       embeddings,
       optimizationMode,
       fileIds,
