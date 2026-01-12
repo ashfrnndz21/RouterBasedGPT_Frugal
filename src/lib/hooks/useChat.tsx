@@ -786,6 +786,7 @@ export const ChatProvider = ({
 
     let recievedMessage = '';
     let added = false;
+    let analyticsTracked = false; // Track if we've already recorded analytics for this response
 
     messageId = messageId ?? crypto.randomBytes(7).toString('hex');
 
@@ -826,6 +827,31 @@ export const ChatProvider = ({
 
       if (data.type === 'message') {
         console.log('[useChat] Received message chunk:', data.data);
+        
+        // Track analytics on first message chunk if metadata is available
+        // This handles cases where metadata comes with the response stream
+        if (!added && data.metadata && !analyticsTracked) {
+          const analytics = getAnalyticsTracker();
+          
+          // Track model usage if a model was actually used (not canned or cache)
+          if (data.metadata.modelTier && !data.metadata.cacheHit && data.metadata.routingPath !== 'canned') {
+            const tier = data.metadata.modelTier === 'tier2' ? 2 : 1;
+            analytics.trackModelUse(tier);
+            console.log('[useChat] Tracked model usage from response metadata:', tier);
+            analyticsTracked = true;
+          }
+          
+          // Track token usage if available
+          if (data.metadata.tokenUsage) {
+            analytics.trackTokens(
+              data.metadata.tokenUsage.inputTokens || 0,
+              data.metadata.tokenUsage.outputTokens || 0,
+              data.metadata.modelTier
+            );
+            console.log('[useChat] Tracked token usage from response metadata');
+          }
+        }
+        
         if (!added) {
           console.log('[useChat] Adding first message chunk');
           setMessages((prevMessages) => [
@@ -898,6 +924,30 @@ export const ChatProvider = ({
 
       if (data.type === 'messageEnd') {
         console.log('[useChat] Message end, metadata:', data.metadata);
+        
+        // Track analytics on client side based on metadata
+        // This is necessary because server-side analytics tracking doesn't work (no localStorage)
+        if (data.metadata && !analyticsTracked) {
+          const analytics = getAnalyticsTracker();
+          
+          // Track model usage if a model was actually used (not canned or cache)
+          if (data.metadata.modelTier && !data.metadata.cacheHit && data.metadata.routingPath !== 'canned') {
+            const tier = data.metadata.modelTier === 'tier2' ? 2 : 1;
+            analytics.trackModelUse(tier);
+            console.log('[useChat] Tracked model usage:', tier, 'from metadata');
+            analyticsTracked = true;
+          }
+          
+          // Track token usage if available
+          if (data.metadata.tokenUsage) {
+            analytics.trackTokens(
+              data.metadata.tokenUsage.inputTokens || 0,
+              data.metadata.tokenUsage.outputTokens || 0,
+              data.metadata.modelTier
+            );
+            console.log('[useChat] Tracked token usage from metadata:', data.metadata.tokenUsage);
+          }
+        }
         
         // Update the last assistant message with final metadata
         if (data.metadata) {

@@ -62,9 +62,13 @@ export class OrchestrationService {
     const emitter = new EventEmitter();
     const startTime = Date.now();
     
+    let intendedTier: 'tier1' | 'tier2' | null = null;
+    let routingPath: string | null = null;
+    
     try {
       // 1. Route the query
       const routingDecision = await this.frugalRouter.route(query, history);
+      routingPath = routingDecision.path;
       
       console.log(`[Orchestration] Routing decision: ${routingDecision.path} (confidence: ${routingDecision.confidence})`);
       
@@ -72,10 +76,12 @@ export class OrchestrationService {
       switch (routingDecision.path) {
         case 'canned':
           await this.handleCannedResponse(query, emitter, startTime);
+          // Canned responses don't use models
           break;
           
         case 'cache':
           // Medium queries: check cache first, then tier1 if miss
+          intendedTier = 'tier1';
           await this.handleCacheQuery(
             query,
             history,
@@ -94,6 +100,7 @@ export class OrchestrationService {
         case 'rag-tier1':
         case 'rag-tier2':
           // Simple/complex queries: go directly to LLM (skip cache)
+          intendedTier = routingDecision.path === 'rag-tier2' ? 'tier2' : 'tier1';
           await this.handleRAGQuery(
             query,
             history,
@@ -102,7 +109,7 @@ export class OrchestrationService {
             optimizationMode,
             fileIds,
             systemInstructions,
-            routingDecision.path === 'rag-tier2' ? 'tier2' : 'tier1',
+            intendedTier,
             emitter,
             startTime,
             true, // skipCache = true for direct routing
@@ -112,6 +119,28 @@ export class OrchestrationService {
       }
     } catch (error) {
       console.error('[Orchestration] Error:', error);
+      
+      // Track model usage even on errors (if we were trying to use a model)
+      // This ensures analytics are complete even when queries fail
+      if (intendedTier && routingPath && routingPath !== 'canned') {
+        try {
+          const analytics = getAnalyticsTracker();
+          analytics.trackModelUse(intendedTier === 'tier2' ? 2 : 1);
+          console.log(`[Orchestration] Tracked model usage for failed query (${intendedTier})`);
+        } catch (analyticsError) {
+          console.error('[Orchestration] Failed to track analytics on error:', analyticsError);
+        }
+      } else if (routingPath && routingPath !== 'canned') {
+        // Fallback: if we don't know the tier, use tier1 as conservative estimate
+        try {
+          const analytics = getAnalyticsTracker();
+          analytics.trackModelUse(1);
+          console.log('[Orchestration] Tracked model usage for failed query (fallback to tier1)');
+        } catch (analyticsError) {
+          console.error('[Orchestration] Failed to track analytics on error:', analyticsError);
+        }
+      }
+      
       emitter.emit('error', error);
     }
     
@@ -151,6 +180,18 @@ export class OrchestrationService {
           },
         }));
         
+        // Emit metadata separately for consistency (canned responses don't use models)
+        emitter.emit('data', JSON.stringify({
+          type: 'metadata',
+          data: {
+            cacheHit: false,
+            routingPath: 'canned',
+            latencyMs,
+            estimatedCost,
+            // No modelTier - canned responses don't use models
+          },
+        }));
+        
         // Log metrics
         globalMetricsTracker.logQuery({
           timestamp: Date.now(),
@@ -161,9 +202,8 @@ export class OrchestrationService {
           estimatedCost,
         });
         
-        // Track analytics - canned responses use tier1 (minimal cost)
-        const analytics = getAnalyticsTracker();
-        analytics.trackModelUse(1);
+        // Note: Canned responses don't use models, so we don't track model usage
+        // This ensures analytics accurately reflect actual model usage
         
         emitter.emit('end');
       });
@@ -223,6 +263,19 @@ export class OrchestrationService {
             routingPath: 'cache',
             latencyMs,
             estimatedCost,
+            modelTier: intendedTier, // Include intended tier for analytics
+          },
+        }));
+        
+        // Emit metadata separately for consistency
+        emitter.emit('data', JSON.stringify({
+          type: 'metadata',
+          data: {
+            cacheHit: true,
+            routingPath: 'cache',
+            latencyMs,
+            estimatedCost,
+            modelTier: intendedTier,
           },
         }));
         
@@ -236,9 +289,8 @@ export class OrchestrationService {
           estimatedCost,
         });
         
-        // Track analytics - cache hits don't use any model
-        const analytics = getAnalyticsTracker();
-        analytics.trackModelUse(1);
+        // Note: Cache hits don't use models, so we don't track model usage
+        // This ensures analytics accurately reflect actual model usage
         
         emitter.emit('end');
       });
@@ -418,24 +470,23 @@ export class OrchestrationService {
       
       console.log(`[Orchestration] Query completed in ${latencyMs}ms (${modelTier})`);
       
-      // Emit final metadata with cost
-      if (estimatedCost !== undefined) {
-        emitter.emit('data', JSON.stringify({
-          type: 'metadata',
-          data: {
-            estimatedCost,
-            modelTier,
-            routingPath: modelTier === 'tier2' ? 'rag-tier2' : 'rag-tier1',
-            cacheHit: false,
-            latencyMs,
-            tokenUsage: tokenUsage ? {
-              inputTokens: tokenUsage.inputTokens,
-              outputTokens: tokenUsage.outputTokens,
-              totalTokens: tokenUsage.inputTokens + tokenUsage.outputTokens,
-            } : undefined,
-          },
-        }));
-      }
+      // Always emit metadata (even without cost) so client can track analytics
+      // Analytics tracking happens on client side because server-side has no localStorage
+      emitter.emit('data', JSON.stringify({
+        type: 'metadata',
+        data: {
+          estimatedCost: estimatedCost || 0,
+          modelTier,
+          routingPath: modelTier === 'tier2' ? 'rag-tier2' : 'rag-tier1',
+          cacheHit: false,
+          latencyMs,
+          tokenUsage: tokenUsage ? {
+            inputTokens: tokenUsage.inputTokens,
+            outputTokens: tokenUsage.outputTokens,
+            totalTokens: tokenUsage.inputTokens + tokenUsage.outputTokens,
+          } : undefined,
+        },
+      }));
       
       // Log metrics with actual cost
       globalMetricsTracker.logQuery({
@@ -466,6 +517,17 @@ export class OrchestrationService {
     
     ragEmitter.on('error', (error: any) => {
       console.error('[Orchestration] RAG error:', error);
+      
+      // Track model usage even on RAG errors (we attempted to use a model)
+      // This ensures analytics are complete even when RAG fails
+      try {
+        const analytics = getAnalyticsTracker();
+        analytics.trackModelUse(modelTier === 'tier2' ? 2 : 1);
+        console.log(`[Orchestration] Tracked model usage for failed RAG query (${modelTier})`);
+      } catch (analyticsError) {
+        console.error('[Orchestration] Failed to track analytics on RAG error:', analyticsError);
+      }
+      
       emitter.emit('error', error);
     });
   }
