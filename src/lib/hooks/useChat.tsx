@@ -15,6 +15,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useCallback,
 } from 'react';
 import crypto from 'crypto';
 import { useSearchParams } from 'next/navigation';
@@ -459,6 +460,7 @@ export const ChatProvider = ({
   const sessionSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const sessionStartedRef = useRef<boolean>(false);
   const sessionQueryCountRef = useRef<number>(0);
+  const initialMessageSentRef = useRef<boolean>(false);
 
   const chatTurns = useMemo((): ChatTurn[] => {
     return messages.filter(
@@ -680,8 +682,10 @@ export const ChatProvider = ({
       setIsMessagesLoaded(true);
       setChatId(crypto.randomBytes(20).toString('hex'));
     }
+    // Reset initial message sent flag when chatId changes
+    initialMessageSentRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [chatId]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -738,18 +742,7 @@ export const ChatProvider = ({
     sendMessage(message.content, message.messageId, true);
   };
 
-  useEffect(() => {
-    if (isReady && initialMessage && isConfigReady) {
-      if (!isConfigReady) {
-        toast.error('Cannot send message before the configuration is ready');
-        return;
-      }
-      sendMessage(initialMessage);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConfigReady, isReady, initialMessage]);
-
-  const sendMessage: ChatContext['sendMessage'] = async (
+  const sendMessage: ChatContext['sendMessage'] = useCallback(async (
     message,
     messageId,
     rewrite = false,
@@ -758,13 +751,13 @@ export const ChatProvider = ({
     setLoading(true);
     setMessageAppeared(false);
 
-    if (messages.length <= 1) {
+    if (messagesRef.current.length <= 1) {
       window.history.replaceState(null, '', `/c/${chatId}`);
     }
 
     // Track session start on first message
     const analytics = getAnalyticsTracker();
-    if (!sessionStartedRef.current && messages.length === 0) {
+    if (!sessionStartedRef.current && messagesRef.current.length === 0) {
       analytics.trackSessionStart();
       sessionStartedRef.current = true;
     }
@@ -1030,7 +1023,7 @@ export const ChatProvider = ({
       }
     };
 
-    const messageIndex = messages.findIndex((m) => m.messageId === messageId);
+    const messageIndex = messagesRef.current.findIndex((m) => m.messageId === messageId);
 
     console.log('[Multilingual] Sending message with language:', language);
 
@@ -1153,7 +1146,24 @@ export const ChatProvider = ({
         console.warn('Incomplete JSON, waiting for next chunk...', error);
       }
     }
-  };
+  }, [
+    loading,
+    chatId,
+    focusMode,
+    optimizationMode,
+    fileIds,
+    chatModelProvider,
+    embeddingModelProvider,
+    chatHistory,
+    language,
+  ]);
+
+  useEffect(() => {
+    if (isReady && initialMessage && isConfigReady && !initialMessageSentRef.current) {
+      initialMessageSentRef.current = true;
+      sendMessage(initialMessage);
+    }
+  }, [isConfigReady, isReady, initialMessage, sendMessage]);
 
   return (
     <chatContext.Provider
