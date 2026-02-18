@@ -548,8 +548,8 @@ export const ChatProvider = ({
         ) as SourceMessage | undefined;
 
         let thinkingEnded = false;
-        let processedMessage = aiMessage?.content ?? '';
-        let speechMessage = aiMessage?.content ?? '';
+        let processedMessage = typeof aiMessage?.content === 'string' ? aiMessage.content : '';
+        let speechMessage = typeof aiMessage?.content === 'string' ? aiMessage.content : '';
         let suggestions: string[] = [];
 
         if (aiMessage) {
@@ -567,7 +567,7 @@ export const ChatProvider = ({
             }
           }
 
-          if (aiMessage.content.includes('</think>')) {
+          if (typeof aiMessage.content === 'string' && aiMessage.content.includes('</think>')) {
             thinkingEnded = true;
           }
 
@@ -609,10 +609,10 @@ export const ChatProvider = ({
               },
             );
             console.log('[useChat] Processed message:', processedMessage.substring(0, 200));
-            speechMessage = aiMessage.content.replace(regex, '');
+            speechMessage = typeof aiMessage.content === 'string' ? aiMessage.content.replace(regex, '') : '';
           } else {
             processedMessage = processedMessage.replace(regex, '');
-            speechMessage = aiMessage.content.replace(regex, '');
+            speechMessage = typeof aiMessage.content === 'string' ? aiMessage.content.replace(regex, '') : '';
           }
 
           const suggestionMessage = messages.find(
@@ -747,6 +747,12 @@ export const ChatProvider = ({
     messageId,
     rewrite = false,
   ) => {
+    // Validate message content
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      console.warn('[useChat] Attempted to send empty message, ignoring');
+      return;
+    }
+    
     if (loading) return;
     setLoading(true);
     setMessageAppeared(false);
@@ -801,12 +807,15 @@ export const ChatProvider = ({
         return;
       }
 
+      // Use the messageId from data, or fall back to the one we generated
+      const responseMessageId = data.messageId || messageId;
+
       if (data.type === 'sources') {
         console.log('[useChat] Received sources:', data.data.length, 'sources');
         setMessages((prevMessages) => [
           ...prevMessages,
           {
-            messageId: data.messageId,
+            messageId: responseMessageId,
             chatId: chatId!,
             role: 'source',
             sources: data.data,
@@ -851,7 +860,7 @@ export const ChatProvider = ({
             ...prevMessages,
             {
               content: data.data,
-              messageId: data.messageId,
+              messageId: responseMessageId,
               chatId: chatId!,
               role: 'assistant',
               createdAt: new Date(),
@@ -865,7 +874,7 @@ export const ChatProvider = ({
           setMessages((prev) =>
             prev.map((message) => {
               if (
-                message.messageId === data.messageId &&
+                message.messageId === responseMessageId &&
                 message.role === 'assistant'
               ) {
                 return { 
@@ -890,7 +899,7 @@ export const ChatProvider = ({
         setMessages((prev) =>
           prev.map((message) => {
             if (
-              message.messageId === data.messageId &&
+              message.messageId === responseMessageId &&
               message.role === 'assistant'
             ) {
               return {
@@ -1027,6 +1036,65 @@ export const ChatProvider = ({
 
     console.log('[Multilingual] Sending message with language:', language);
 
+    // Check if we're in a workspace and search documents for RAG
+    let enhancedSystemInstructions = localStorage.getItem('systemInstructions') || '';
+    const currentWorkspaceId = localStorage.getItem('currentWorkspaceId');
+    const currentConversationId = localStorage.getItem('currentConversationId');
+    
+    if (currentWorkspaceId) {
+      try {
+        console.log('[useChat] Fetching workspace documents for conversation:', currentConversationId || 'none');
+        
+        // Step 1: Always get recent document previews (baseline context) - conversation-specific
+        const previewUrl = `/api/workspaces/${currentWorkspaceId}/documents/previews${currentConversationId ? `?conversationId=${currentConversationId}` : ''}`;
+        const previewRes = await fetch(previewUrl);
+        const previewData = previewRes.ok ? await previewRes.json() : { previews: [] };
+        
+        // Step 2: Try semantic search for targeted results - conversation-specific
+        const searchRes = await fetch(`/api/workspaces/${currentWorkspaceId}/documents/search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            query: message, 
+            topK: 3, 
+            threshold: 0.3,
+            conversationId: currentConversationId 
+          }),
+        });
+        const searchData = searchRes.ok ? await searchRes.json() : { results: [] };
+        
+        // Step 3: Build combined context
+        let documentContext = '';
+        
+        // Always include recent document previews (baseline awareness) - from this conversation
+        if (previewData.previews && previewData.previews.length > 0) {
+          documentContext += '--- CONVERSATION DOCUMENTS (Uploaded in this chat) ---\n';
+          documentContext += 'The following documents were uploaded in this conversation:\n\n';
+          previewData.previews.forEach((p: any, i: number) => {
+            documentContext += `[Document ${i + 1}: ${p.filename}]\n${p.preview}\n\n`;
+          });
+          console.log('[useChat] Added', previewData.previews.length, 'document previews from this conversation');
+        }
+        
+        // Add semantic search results if available (targeted excerpts)
+        if (searchData.results && searchData.results.length > 0) {
+          documentContext += '\n--- SEMANTICALLY RELEVANT EXCERPTS ---\n';
+          documentContext += 'The following excerpts are most relevant to your question:\n\n';
+          searchData.results.forEach((r: any, i: number) => {
+            documentContext += `[Relevant excerpt from ${r.filename}]\n${r.content}\n\n`;
+          });
+          console.log('[useChat] Added', searchData.results.length, 'semantic search results');
+        }
+        
+        // Add to system instructions if we have any document context
+        if (documentContext) {
+          enhancedSystemInstructions += `\n\n${documentContext}--- END OF DOCUMENTS ---\n\nWhen answering, cite the document names when using information from them.`;
+        }
+      } catch (error) {
+        console.warn('[useChat] Failed to fetch workspace documents:', error);
+      }
+    }
+
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: {
@@ -1054,7 +1122,7 @@ export const ChatProvider = ({
           name: embeddingModelProvider.name,
           provider: embeddingModelProvider.provider,
         },
-        systemInstructions: localStorage.getItem('systemInstructions'),
+        systemInstructions: enhancedSystemInstructions,
         language: language,
         maxHistoryTurns: (() => {
           const stored = localStorage.getItem('maxHistoryTurns');

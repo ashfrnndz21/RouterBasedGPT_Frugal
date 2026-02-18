@@ -23,6 +23,7 @@ export const loadOllamaChatModels = async () => {
       headers: {
         'Content-Type': 'application/json',
       },
+      timeout: 10000, // 10 second timeout for remote connections
     });
 
     const { models } = res.data;
@@ -54,8 +55,14 @@ export const loadOllamaChatModels = async () => {
     });
 
     return chatModels;
-  } catch (err) {
-    console.error(`Error loading Ollama models: ${err}`);
+  } catch (err: any) {
+    if (err.code === 'ETIMEDOUT' || err.message?.includes('timeout')) {
+      console.error(`[Ollama] Connection timeout to ${ollamaApiEndpoint}. Check if the remote server is accessible.`);
+    } else if (err.code === 'ECONNREFUSED') {
+      console.error(`[Ollama] Connection refused to ${ollamaApiEndpoint}. Check if Ollama is running on the remote server.`);
+    } else {
+      console.error(`[Ollama] Error loading models from ${ollamaApiEndpoint}:`, err.message || err);
+    }
     return {};
   }
 };
@@ -83,6 +90,7 @@ export const loadOllamaEmbeddingModels = async () => {
       headers: {
         'Content-Type': 'application/json',
       },
+      timeout: 10000, // 10 second timeout for remote connections
     });
 
     const { models } = res.data;
@@ -125,8 +133,14 @@ export const loadOllamaEmbeddingModels = async () => {
     console.log(`[Ollama] Loaded ${Object.keys(embeddingModels).length} embedding models: ${Object.keys(embeddingModels).join(', ')}`);
 
     return embeddingModels;
-  } catch (err) {
-    console.error(`Error loading Ollama embeddings models: ${err}`);
+  } catch (err: any) {
+    if (err.code === 'ETIMEDOUT' || err.message?.includes('timeout')) {
+      console.error(`[Ollama] Connection timeout to ${ollamaApiEndpoint}. Check if the remote server is accessible.`);
+    } else if (err.code === 'ECONNREFUSED') {
+      console.error(`[Ollama] Connection refused to ${ollamaApiEndpoint}. Check if Ollama is running on the remote server.`);
+    } else {
+      console.error(`[Ollama] Error loading embedding models from ${ollamaApiEndpoint}:`, err.message || err);
+    }
     return {};
   }
 };

@@ -18,7 +18,7 @@ APP_PORT=3000
 APP_URL="http://localhost:${APP_PORT}"
 METRICS_URL="http://localhost:${APP_PORT}/metrics"
 OLLAMA_URL="http://localhost:11434"
-REQUIRED_MODELS=("granite4:micro" "qwen3:1.7b" "qwen3-embedding:4b")
+REQUIRED_MODELS=("granite4:micro" "qwen3:1.7b" "qwen3-embedding:0.6b")
 
 # Parse command line arguments
 RESET_MODE=false

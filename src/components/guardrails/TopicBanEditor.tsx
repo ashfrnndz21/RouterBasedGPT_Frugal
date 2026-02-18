@@ -191,7 +191,7 @@ export default function TopicBanEditor({ config, onUpdate }: TopicBanEditorProps
                 <li>Queries are checked against banned topics using {method === 'embedding' ? 'semantic similarity' : 'LLM classification'}</li>
                 <li>If similarity ≥ {threshold.toFixed(2)}, the query is blocked</li>
                 <li>System automatically uses the best available embedding model (bge-large, mxbai-embed-large, or nomic-embed-text)</li>
-                <li>Use "Test Guardrails" tab to verify your configuration</li>
+                <li>Use &quot;Test Guardrails&quot; tab to verify your configuration</li>
               </ul>
             </div>
           </div>

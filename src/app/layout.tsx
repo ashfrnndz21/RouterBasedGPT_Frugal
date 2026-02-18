@@ -16,9 +16,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'FrugalAIGpt - AI-Powered Search & Chat',
+  title: 'PTTGPT - AI-Powered Search & Intelligence',
   description:
-    'FrugalAIGpt is an intelligent AI assistant that searches the web and provides accurate, real-time answers.',
+    'PTTGPT is an intelligent AI assistant that searches the web and provides accurate, real-time answers.',
 };
 
 export default function RootLayout({

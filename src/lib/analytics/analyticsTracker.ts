@@ -416,7 +416,7 @@ export function getAnalyticsTracker(): AnalyticsTracker {
       exportAnalytics: () => '{}',
       pruneOldData: () => {},
       clearAllData: () => {},
-    } as AnalyticsTracker;
+    } as unknown as AnalyticsTracker;
   }
 
   if (!analyticsTrackerInstance) {

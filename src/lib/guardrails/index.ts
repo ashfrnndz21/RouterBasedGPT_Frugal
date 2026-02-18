@@ -4,7 +4,7 @@
 
 import { BaseMessage } from '@langchain/core/messages';
 import { Embeddings } from '@langchain/core/embeddings';
-import { BaseChatModel } from '@langchain/core/language_models/base';
+import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { TokenLimiter } from './static/tokenLimiter';
 import { RateLimiter } from './static/rateLimiter';
 import { TopicBanner } from './dynamic/topicBanner';

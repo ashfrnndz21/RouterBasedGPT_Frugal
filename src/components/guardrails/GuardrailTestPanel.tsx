@@ -184,7 +184,7 @@ export default function GuardrailTestPanel({ config }: GuardrailTestPanelProps) 
               }}
               className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors"
             >
-              "{example}"
+              &quot;{example}&quot;
             </button>
           ))}
         </div>

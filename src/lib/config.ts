@@ -93,7 +93,8 @@ export const getSearxngApiEndpoint = () =>
 export const getSerperApiKey = () =>
   process.env.SERPER_API_KEY || loadConfig().API_ENDPOINTS?.SERPER_API_KEY || '';
 
-export const getOllamaApiEndpoint = () => loadConfig().MODELS.OLLAMA.API_URL;
+export const getOllamaApiEndpoint = () => 
+  process.env.OLLAMA_API_URL || loadConfig().MODELS.OLLAMA.API_URL;
 
 export const getOllamaApiKey = () => loadConfig().MODELS.OLLAMA.API_KEY;
 

@@ -14,6 +14,7 @@ import {
 import Markdown, { MarkdownToJSX } from 'markdown-to-jsx';
 import Copy from './MessageActions/Copy';
 import Rewrite from './MessageActions/Rewrite';
+import Pin from './MessageActions/Pin';
 import MessageSources from './MessageSources';
 import SearchImages from './SearchImages';
 import SearchVideos from './SearchVideos';
@@ -76,6 +77,18 @@ const MessageBox = ({
         component: ({ children, ...props }: any) => {
           // Just ignore the references tag content
           return null;
+        },
+      },
+      // Handle <question> tag from AI responses
+      question: {
+        component: ({ children, ...props }: any) => {
+          return <div className="font-semibold text-black dark:text-white mb-2">{children}</div>;
+        },
+      },
+      // Handle <answer> tag from AI responses
+      answer: {
+        component: ({ children, ...props }: any) => {
+          return <div className="text-black/80 dark:text-white/80">{children}</div>;
         },
       },
     },
@@ -176,6 +189,11 @@ const MessageBox = ({
                       />
                     </div>
                     <div className="flex flex-row items-center space-x-1">
+                      <Pin
+                        messageId={section.assistantMessage.messageId}
+                        content={section.assistantMessage.content}
+                        conversationId={section.assistantMessage.chatId}
+                      />
                       <Copy
                         initialMessage={section.assistantMessage.content}
                         section={section}

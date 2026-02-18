@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { BookOpenText, Home, Search, SquarePen, Settings, BarChart3, Shield } from 'lucide-react';
+import { BookOpenText, Home, Search, SquarePen, Settings, BarChart3, Shield, FolderKanban } from 'lucide-react';
 import Link from 'next/link';
 import { useSelectedLayoutSegments } from 'next/navigation';
 import React, { useState, type ReactNode } from 'react';
@@ -25,10 +25,16 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
       label: 'Home',
     },
     {
+      icon: FolderKanban,
+      href: '/workspaces',
+      active: segments.includes('workspaces'),
+      label: 'PTT Spaces',
+    },
+    {
       icon: Search,
       href: '/discover',
       active: segments.includes('discover'),
-      label: 'TrueDiscovery',
+      label: 'PTT Discovery',
     },
     {
       icon: BookOpenText,
@@ -57,7 +63,7 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
           <a href="/" className="flex flex-col items-center gap-2">
             <img 
               src="/truegpt-logo.svg" 
-              alt="FrugalAIGpt" 
+              alt="PTTGPT" 
               className="w-12 h-12 rounded-lg"
             />
           </a>

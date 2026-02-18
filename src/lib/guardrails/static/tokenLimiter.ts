@@ -60,7 +60,12 @@ export class TokenLimiter {
     tier: 'tier1' | 'tier2'
   ): GuardrailResult {
     const historyTokens = history.reduce(
-      (sum, msg) => sum + this.countTokens(msg.content),
+      (sum, msg) => {
+        const content = typeof msg.content === 'string' 
+          ? msg.content 
+          : JSON.stringify(msg.content);
+        return sum + this.countTokens(content);
+      },
       0
     );
     const limit = this.maxContextTokens[tier];

@@ -1,0 +1,52 @@
+services:
+  # ============================================
+  # Nginx Reverse Proxy with Password Protection
+  # ============================================
+  nginx:
+    build:
+      context: ./dockers/nginx
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./dockers/nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+    depends_on:
+      - app
+    networks:
+      - frugalaigpt-network
+    restart: unless-stopped
+
+  # ============================================
+  # FrugalAI Application
+  # ============================================
+  app:
+    build:
+      context: .
+      dockerfile: dockers/app/Dockerfile
+    environment:
+      - DATA_DIR=/home/frugalaigpt
+      - NODE_ENV=production
+    expose:
+      - "3000"
+    networks:
+      - frugalaigpt-network
+    volumes:
+      - backend-dbstore:/home/frugalaigpt/data
+      - uploads:/home/frugalaigpt/uploads
+      - /home/ubuntu/etc/config.toml:/home/frugalaigpt/config.toml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  frugalaigpt-network:
+    driver: bridge
+
+volumes:
+  backend-dbstore:
+  uploads:

@@ -32,6 +32,9 @@ export const getMultilingualSystemPrompt = (languageCode: string): string => {
  * Prepend language instruction to existing system instructions
  * This ensures the LLM responds in the correct language while
  * maintaining any custom system instructions
+ * 
+ * IMPORTANT: If custom instructions contain agent identity, we put the
+ * language instruction AFTER to avoid overriding the agent's persona
  */
 export const prependLanguageInstruction = (
   languageCode: string,
@@ -43,5 +46,16 @@ export const prependLanguageInstruction = (
     return languagePrompt;
   }
   
+  // If there's a custom agent prompt (detected by checking for identity keywords),
+  // append language instruction instead of prepending to preserve agent identity priority
+  const hasAgentIdentity = existingInstructions.toLowerCase().includes('you are') && 
+                           existingInstructions.length > 100; // Likely has custom persona
+  
+  if (hasAgentIdentity) {
+    // Put agent identity first, language instruction at the end
+    return `${existingInstructions}\n\nLanguage Instruction: ${languagePrompt}`;
+  }
+  
+  // Default: prepend language instruction
   return `${languagePrompt}\n\n${existingInstructions}`;
 };

@@ -252,15 +252,31 @@ export class TopicBanner {
     }
 
     try {
-      const prompt = `Classify this user query into one of these categories: ${this.config.topics.join(', ')}, or "other".
+      const prompt = `You are a content moderation system. Analyze if the user query relates to ANY of the banned topics below.
 
-Query: "${query}"
+BANNED TOPICS:
+${this.config.topics.map((t, i) => `${i + 1}. "${t}"`).join('\n')}
+
+USER QUERY: "${query}"
+
+IMPORTANT RULES:
+1. Match by INTENT and MEANING, not just exact words
+2. "why X is bad/terrible/worst" = negative sentiment about X = matches "hate X" or criticism of X
+3. Questions asking for negative information about a topic should match that topic's ban
+4. Consider synonyms, rephrasing, and indirect references
+5. If the query expresses negativity, criticism, or seeks to disparage something in the banned list, it's a match
+
+Examples:
+- "why thailand is bad?" matches "hate Thailand" (seeking negative info = hate speech intent)
+- "gambling tips" matches "gambling" 
+- "is thai government corrupt?" matches "Thai society corrupt"
+- "best restaurants in bangkok" does NOT match any Thailand-related bans (positive/neutral)
 
 Respond with JSON only:
 {
-  "category": "category_name or 'other'",
+  "category": "exact_banned_topic_text or 'other'",
   "confidence": 0.0-1.0,
-  "reasoning": "brief explanation"
+  "reasoning": "brief explanation of why it matches or doesn't"
 }`;
 
       console.log(`[TopicBanner] [LLM] Classifying query: "${query}" against categories: ${this.config.topics.join(', ')}`);

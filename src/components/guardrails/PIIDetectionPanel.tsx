@@ -6,6 +6,8 @@ import { Switch } from '@headlessui/react';
 import { GuardrailsConfig } from '@/lib/guardrails/types';
 import { cn } from '@/lib/utils';
 
+type PIIType = 'email' | 'phone' | 'ssn' | 'credit-card' | 'ip-address';
+
 interface PIIDetectionPanelProps {
   config: GuardrailsConfig;
   onUpdate: () => void;
@@ -21,12 +23,12 @@ export default function PIIDetectionPanel({ config, onUpdate }: PIIDetectionPane
   };
 
   const [enabled, setEnabled] = useState(outputConfig.piiDetection.enabled);
-  const [types, setTypes] = useState<(string)[]>(outputConfig.piiDetection.types || []);
+  const [types, setTypes] = useState<PIIType[]>(outputConfig.piiDetection.types || []);
   const [action, setAction] = useState<'block' | 'redact'>(outputConfig.piiDetection.action || 'block');
   const [redactionChar, setRedactionChar] = useState(outputConfig.piiDetection.redactionChar || '***');
   const [saving, setSaving] = useState(false);
 
-  const piiTypes = [
+  const piiTypes: Array<{ id: PIIType; label: string; example: string }> = [
     { id: 'email', label: 'Email Address', example: 'user@example.com' },
     { id: 'phone', label: 'Phone Number', example: '(555) 123-4567' },
     { id: 'ssn', label: 'Social Security Number', example: '123-45-6789' },
@@ -59,7 +61,7 @@ export default function PIIDetectionPanel({ config, onUpdate }: PIIDetectionPane
     }
   };
 
-  const toggleType = async (typeId: string) => {
+  const toggleType = async (typeId: PIIType) => {
     const updated = types.includes(typeId)
       ? types.filter(t => t !== typeId)
       : [...types, typeId];

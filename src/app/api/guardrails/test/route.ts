@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { loadGuardrailsConfig } from '@/lib/guardrails/storage/guardrailsStore';
 import { Guardrails } from '@/lib/guardrails';
 import { getBestEmbeddingForGuardrails } from '@/lib/guardrails/utils/getBestEmbedding';
-import { BaseMessage } from '@langchain/core/messages';
+import { BaseMessage, HumanMessage, AIMessage } from '@langchain/core/messages';
 import { getAvailableChatModelProviders } from '@/lib/providers';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 
@@ -65,10 +65,11 @@ export async function POST(req: NextRequest) {
 
     // Convert history to BaseMessage format
     const baseHistory: BaseMessage[] = history.map((msg: any) => {
+      const content = msg.content || msg[1] || '';
       if (msg.role === 'user' || msg.role === 'human') {
-        return { role: 'user', content: msg.content || msg[1] } as BaseMessage;
+        return new HumanMessage({ content });
       } else {
-        return { role: 'assistant', content: msg.content || msg[1] } as BaseMessage;
+        return new AIMessage({ content });
       }
     });
 
