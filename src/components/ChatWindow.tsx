@@ -25,6 +25,19 @@ export interface ResponseMetadata {
   tokensSaved?: number;
   estimatedCost?: number;
   latencyMs?: number;
+  tokenUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens?: number;
+  };
+  // Guardrails error metadata
+  error?: boolean;
+  violations?: Array<{
+    code?: string;
+    reason: string;
+    metadata?: any;
+  }>;
+  code?: string;
 }
 
 export interface AssistantMessage extends BaseMessage {

@@ -19,7 +19,13 @@ import {
 import { searchHandlers } from '@/lib/search';
 import { prependLanguageInstruction } from '@/lib/prompts';
 import { StatefulOrchestrator } from '@/lib/orchestration/statefulOrchestrator';
+import { OrchestrationService } from '@/lib/orchestration/orchestrationService';
 import { z } from 'zod';
+import { loadGuardrailsConfig } from '@/lib/guardrails/storage/guardrailsStore';
+import { Guardrails } from '@/lib/guardrails';
+import { getBestEmbeddingForGuardrails } from '@/lib/guardrails/utils/getBestEmbedding';
+import { OutputGuardrails } from '@/lib/guardrails/output';
+import { FrugalRouter } from '@/lib/routing/frugalRouter';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -63,6 +69,7 @@ const bodySchema = z.object({
   embeddingModel: embeddingModelSchema.optional().default({}),
   systemInstructions: z.string().nullable().optional().default(''),
   language: z.string().optional().default('en'),
+  maxHistoryTurns: z.number().int().min(1).max(50).optional().default(2),
 });
 
 type Message = z.infer<typeof messageSchema>;
@@ -98,59 +105,189 @@ const handleEmitterEvents = async (
 
   const startTime = Date.now();
   let sourcesReceived = false;
+  let responseMetadata: any = null; // Store metadata from orchestrator
+  let outputGuardrails: OutputGuardrails | null = null;
+  let streamBlocked = false; // Flag to stop streaming if blocked
+  
+  // Check if output guardrails are enabled (to enable incremental checking)
+  try {
+    const guardrailsConfig = loadGuardrailsConfig();
+    if (guardrailsConfig.output?.enabled) {
+      outputGuardrails = new OutputGuardrails(guardrailsConfig.output);
+    }
+  } catch (error) {
+    console.warn('[Chat] Could not initialize output guardrails for incremental checking:', error);
+  }
 
   stream.on('data', (data) => {
-    const parsedData = JSON.parse(data);
-    if (parsedData.type === 'response') {
-      writer.write(
-        encoder.encode(
-          JSON.stringify({
-            type: 'message',
-            data: parsedData.data,
-            messageId: aiMessageId,
-          }) + '\n',
-        ),
-      );
+    try {
+      const parsedData = JSON.parse(data);
+      
+      if (parsedData.type === 'response') {
+        // If already blocked, don't send more chunks
+        if (streamBlocked) {
+          return;
+        }
 
-      recievedMessage += parsedData.data;
-    } else if (parsedData.type === 'sources') {
-      sourcesReceived = true;
-      writer.write(
-        encoder.encode(
-          JSON.stringify({
-            type: 'sources',
-            data: parsedData.data,
-            messageId: aiMessageId,
-          }) + '\n',
-        ),
-      );
+        recievedMessage += parsedData.data;
+        
+        // Incremental check with sliding window (last ~100 chars = ~5-6 words)
+        if (outputGuardrails && recievedMessage.length > 10) {
+          const partialCheck = outputGuardrails.checkPartialResponse(recievedMessage, 100);
+          
+          if (!partialCheck.allowed) {
+            // Violation detected - stop streaming immediately
+            streamBlocked = true;
+            const guardrailsConfig = loadGuardrailsConfig();
+            const safeMessage = guardrailsConfig.output?.safeMessage || 'Response blocked by guardrails';
+            
+            console.warn('[Output Guardrails] Early violation detected, stopping stream:', partialCheck.reason);
+            
+            // Send outputBlocked event immediately
+            writer.write(
+              encoder.encode(
+                JSON.stringify({
+                  type: 'outputBlocked',
+                  messageId: aiMessageId,
+                  safeMessage: safeMessage,
+                  reason: partialCheck.reason,
+                  violations: partialCheck.violations || [],
+                  metadata: partialCheck.metadata,
+                }) + '\n',
+              ),
+            ).catch((err) => {
+              if (err?.name !== 'ResponseAborted') {
+                console.error('[Chat] Error writing outputBlocked event:', err);
+              }
+            });
+            
+            // Update received message for database
+            recievedMessage = safeMessage;
+            return; // Don't send this chunk
+          }
+        }
+        
+        // Chunk passed check - send it
+        writer.write(
+          encoder.encode(
+            JSON.stringify({
+              type: 'message',
+              data: parsedData.data,
+              messageId: aiMessageId,
+            }) + '\n',
+          ),
+        ).catch((err) => {
+          // Ignore ResponseAborted errors - client disconnected
+          if (err?.name !== 'ResponseAborted') {
+            console.error('[Chat] Error writing response:', err);
+          }
+        });
+        
+        // Capture metadata from orchestrator if available
+        if (parsedData.metadata) {
+          responseMetadata = { ...responseMetadata, ...parsedData.metadata };
+        }
+      } else if (parsedData.type === 'metadata') {
+        // Capture final metadata with cost and token usage
+        if (parsedData.data) {
+          responseMetadata = { ...responseMetadata, ...parsedData.data };
+        }
+      } else if (parsedData.type === 'sources') {
+        sourcesReceived = true;
+        writer.write(
+          encoder.encode(
+            JSON.stringify({
+              type: 'sources',
+              data: parsedData.data,
+              messageId: aiMessageId,
+            }) + '\n',
+          ),
+        ).catch((err) => {
+          // Ignore ResponseAborted errors - client disconnected
+          if (err?.name !== 'ResponseAborted') {
+            console.error('[Chat] Error writing sources:', err);
+          }
+        });
 
-      const sourceMessageId = crypto.randomBytes(7).toString('hex');
+        const sourceMessageId = crypto.randomBytes(7).toString('hex');
 
-      db.insert(messagesSchema)
-        .values({
-          chatId: chatId,
-          messageId: sourceMessageId,
-          role: 'source',
-          sources: parsedData.data,
-          createdAt: new Date().toString(),
-        })
-        .execute();
+        db.insert(messagesSchema)
+          .values({
+            chatId: chatId,
+            messageId: sourceMessageId,
+            role: 'source',
+            sources: parsedData.data,
+            createdAt: new Date().toString(),
+          })
+          .execute();
+      }
+    } catch (error) {
+      console.error('[Chat] Error handling stream data:', error, 'Data:', data);
     }
   });
-  stream.on('end', () => {
+  stream.on('end', async () => {
     const endTime = Date.now();
     const latencyMs = endTime - startTime;
     
-    // Calculate basic metadata
-    const metadata = {
-      modelTier: 'tier1' as const, // Basic handler uses tier1
+    // Use metadata from orchestrator if available, otherwise use defaults
+    const metadata = responseMetadata || {
+      modelTier: 'tier1' as const,
       routingPath: sourcesReceived ? 'rag-tier1' as const : 'canned' as const,
-      estimatedCost: sourcesReceived ? 0.0008 : 0.0003, // Rough estimates
+      estimatedCost: sourcesReceived ? 0.0008 : 0.0003,
       latencyMs: latencyMs,
       cacheHit: false,
     };
+    
+    // Ensure latencyMs is set
+    if (!metadata.latencyMs) {
+      metadata.latencyMs = latencyMs;
+    }
 
+    // Final output guardrails check (for PII detection and full context checks)
+    // Note: If streamBlocked is true, we already handled it incrementally
+    if (!streamBlocked) {
+      try {
+        const guardrailsConfig = loadGuardrailsConfig();
+        if (guardrailsConfig.output?.enabled && outputGuardrails) {
+          const outputCheck = await outputGuardrails.checkResponse(recievedMessage);
+          
+          if (!outputCheck.allowed) {
+            // Response was blocked - send special event to frontend
+            const blockedMessage = outputCheck.filtered || guardrailsConfig.output.safeMessage;
+            const violations = outputCheck.violations || [];
+            recievedMessage = blockedMessage;
+            console.warn('[Output Guardrails] Response blocked (final check):', outputCheck.reason, violations);
+            
+            // Send outputBlocked event to frontend so it can replace the displayed message
+            writer.write(
+              encoder.encode(
+                JSON.stringify({
+                  type: 'outputBlocked',
+                  messageId: aiMessageId,
+                  safeMessage: blockedMessage,
+                  reason: outputCheck.reason,
+                  violations: violations,
+                  metadata: outputCheck.metadata,
+                }) + '\n',
+              ),
+            ).catch((err) => {
+              if (err?.name !== 'ResponseAborted') {
+                console.error('[Chat] Error writing outputBlocked event:', err);
+              }
+            });
+          } else if (outputCheck.filtered && outputCheck.filtered !== recievedMessage) {
+            // Response was sanitized (PII redacted) but allowed
+            recievedMessage = outputCheck.filtered;
+            console.log('[Output Guardrails] Response sanitized (PII redacted)');
+          }
+        }
+      } catch (error) {
+        console.error('[Output Guardrails] Final check failed:', error);
+        // Fail-open: allow response through if check fails
+      }
+    }
+
+    // Check if writer is still open before writing
     writer.write(
       encoder.encode(
         JSON.stringify({
@@ -158,8 +295,31 @@ const handleEmitterEvents = async (
           metadata: metadata,
         }) + '\n',
       ),
-    );
-    writer.close();
+    ).then(() => {
+      // Only close if not already closed
+      try {
+        writer.close();
+      } catch (err: any) {
+        // Ignore if already closed
+        if (err?.code !== 'ERR_INVALID_STATE') {
+          console.error('[Chat] Error closing writer:', err);
+        }
+      }
+    }).catch((err) => {
+      // Ignore ResponseAborted errors - client disconnected
+      if (err?.name !== 'ResponseAborted') {
+        console.error('[Chat] Error writing messageEnd:', err);
+      }
+      // Only try to close if not already closed
+      try {
+        writer.close();
+      } catch (closeErr: any) {
+        // Ignore if already closed
+        if (closeErr?.code !== 'ERR_INVALID_STATE') {
+          console.error('[Chat] Error closing writer:', closeErr);
+        }
+      }
+    });
 
     db.insert(messagesSchema)
       .values({
@@ -171,17 +331,57 @@ const handleEmitterEvents = async (
       })
       .execute();
   });
-  stream.on('error', (data) => {
-    const parsedData = JSON.parse(data);
-    writer.write(
-      encoder.encode(
-        JSON.stringify({
-          type: 'error',
-          data: parsedData.data,
-        }),
-      ),
-    );
-    writer.close();
+  stream.on('error', (error) => {
+    console.error('[Chat] Stream error:', error);
+    try {
+      const errorData = typeof error === 'string' ? JSON.parse(error) : { data: String(error) };
+      writer.write(
+        encoder.encode(
+          JSON.stringify({
+            type: 'error',
+            data: errorData.data || String(error),
+          }) + '\n',
+        ),
+      ).catch((err) => {
+        // Ignore ResponseAborted errors
+        if (err?.name !== 'ResponseAborted') {
+          console.error('[Chat] Error writing error message:', err);
+        }
+      }).finally(() => {
+        // Only close if not already closed
+        try {
+          writer.close();
+        } catch (closeErr: any) {
+          if (closeErr?.code !== 'ERR_INVALID_STATE') {
+            console.error('[Chat] Error closing writer on error:', closeErr);
+          }
+        }
+      });
+    } catch (err) {
+      console.error('[Chat] Error parsing error data:', err);
+      writer.write(
+        encoder.encode(
+          JSON.stringify({
+            type: 'error',
+            data: String(error),
+          }) + '\n',
+        ),
+      ).catch((writeErr) => {
+        // Ignore ResponseAborted errors
+        if (writeErr?.name !== 'ResponseAborted') {
+          console.error('[Chat] Error writing error message:', writeErr);
+        }
+      }).finally(() => {
+        // Only close if not already closed
+        try {
+          writer.close();
+        } catch (closeErr: any) {
+          if (closeErr?.code !== 'ERR_INVALID_STATE') {
+            console.error('[Chat] Error closing writer on error:', closeErr);
+          }
+        }
+      });
+    }
   });
 };
 
@@ -333,6 +533,65 @@ export const POST = async (req: Request) => {
       }
     });
 
+    // Check if this is a canned response - skip guardrails for pre-approved static responses
+    const frugalRouter = new FrugalRouter(embedding);
+    const isCannedResponse = frugalRouter.getCannedResponse(message.content) !== null;
+    
+    // Apply guardrails (after history is created) - skip for canned responses
+    if (!isCannedResponse) {
+      try {
+        const guardrailsConfig = loadGuardrailsConfig();
+        
+        // Use best embedding model for guardrails if topic banning is enabled
+        // This ensures better semantic similarity accuracy
+        let guardrailsEmbedding = embedding;
+        if (guardrailsConfig.dynamic.topicBanning.enabled) {
+          const bestEmbedding = await getBestEmbeddingForGuardrails(
+            guardrailsConfig.dynamic.topicBanning.embeddingModel
+          );
+          if (bestEmbedding) {
+            guardrailsEmbedding = bestEmbedding;
+            console.log('[Chat API] Using optimized embedding model for guardrails');
+          }
+        }
+        
+        const guardrails = new Guardrails(guardrailsConfig, guardrailsEmbedding, llm);
+        
+        // Get client identifier for rate limiting
+        const clientId = req.headers.get('x-forwarded-for') || 
+                        req.headers.get('x-real-ip') || 
+                        message.chatId || 
+                        'unknown';
+        
+        // Determine tier (will be determined by router, but use tier1 as default for guardrails check)
+        const tier: 'tier1' | 'tier2' = 'tier1';
+        
+        // Check guardrails
+        const guardrailResult = await guardrails.check(
+          message.content,
+          history,
+          tier,
+          clientId
+        );
+        
+        if (!guardrailResult.allowed) {
+          const statusCode = guardrailResult.code === 'RATE_LIMIT_EXCEEDED' ? 429 : 403;
+          return Response.json({
+            error: guardrailResult.reason,
+            code: guardrailResult.code,
+            violations: guardrailResult.violations,
+            metadata: guardrailResult.metadata,
+          }, { status: statusCode });
+        }
+      } catch (error: any) {
+        // Log error but don't block request if guardrails fail
+        console.error('[Chat API] Guardrails check failed:', error);
+        // Continue with request if guardrails fail (fail-open for now)
+      }
+    } else {
+      console.log('[Chat API] Skipping guardrails for canned response:', message.content);
+    }
+
     const handler = searchHandlers[body.focusMode];
 
     if (!handler) {
@@ -345,48 +604,35 @@ export const POST = async (req: Request) => {
     }
 
     // Prepend language-specific system prompt to existing instructions
-    console.log('[Multilingual] Language received:', body.language);
     const systemInstructionsWithLanguage = prependLanguageInstruction(
       body.language,
       body.systemInstructions as string,
     );
-    console.log('[Multilingual] System instructions:', systemInstructionsWithLanguage);
 
     // Use stateful orchestrator for advanced context management
-    const useStatefulOrchestration = false; // Temporarily disabled - streaming issue
-    
-    let stream: any;
-    
-    if (useStatefulOrchestration) {
-      console.log('[Chat] Using stateful orchestration');
-      const orchestrator = new StatefulOrchestrator(handler, embedding);
-      stream = await orchestrator.handleQuery(
-        message.content,
-        message.chatId,
-        history,
-        llm,
-        embedding,
-        body.optimizationMode,
-        body.files,
-        systemInstructionsWithLanguage,
-      );
-    } else {
-      console.log('[Chat] Using basic search handler');
-      stream = await handler.searchAndAnswer(
-        message.content,
-        history,
-        llm,
-        embedding,
-        body.optimizationMode,
-        body.files,
-        systemInstructionsWithLanguage,
-      );
-    }
+    const useStatefulOrchestration = true; // Enabled — uses warmed singletons via bootstrap()
 
+    const orchestrator = new StatefulOrchestrator(handler, embedding);
+    
     const responseStream = new TransformStream();
     const writer = responseStream.writable.getWriter();
     const encoder = new TextEncoder();
 
+    // Set up event handlers BEFORE starting the query
+    const maxHistoryTurns = body.maxHistoryTurns ?? 2;
+    const stream = await orchestrator.handleQuery(
+      message.content,
+      message.chatId,
+      history,
+      llm,
+      embedding,
+      body.optimizationMode,
+      body.files,
+      systemInstructionsWithLanguage,
+      maxHistoryTurns
+    );
+
+    // Attach event listeners immediately
     handleEmitterEvents(stream, writer, encoder, message.chatId);
     handleHistorySave(message, humanMessageId, body.focusMode, body.files);
 

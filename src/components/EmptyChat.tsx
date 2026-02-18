@@ -34,11 +34,11 @@ const EmptyChat = () => {
           <div className="flex flex-col items-center space-y-4 -mt-8">
             <img 
               src="/truegpt-logo.svg" 
-              alt="FrugalAIGpt Logo" 
+              alt="PTTGPT Logo" 
               className="w-24 h-24 rounded-2xl shadow-lg"
             />
             <h1 className="text-6xl font-black truegpt-gradient-text tracking-tight">
-              TrueGpt
+              PTTGPT
             </h1>
             <h2 className="text-black/70 dark:text-white/70 text-xl font-semibold tracking-wide">
               AI-Powered Search & Intelligence

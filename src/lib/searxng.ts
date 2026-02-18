@@ -44,7 +44,7 @@ export const searchSearxng = async (
       // Map imageUrl to thumbnail for compatibility
       const mappedResults = serperResults.results.map(result => ({
         ...result,
-        thumbnail: result.imageUrl || result.thumbnail,
+        thumbnail: result.imageUrl || '',
       }));
       return {
         results: mappedResults as SearxngSearchResult[],

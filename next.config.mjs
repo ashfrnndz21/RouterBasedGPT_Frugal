@@ -11,7 +11,7 @@ const nextConfig = {
   serverExternalPackages: ['pdf-parse'],
   
   // Performance optimizations
-  swcMinify: true,
+  // swcMinify is enabled by default in Next.js 15+
   compress: true,
   
   // Optimize chunk loading

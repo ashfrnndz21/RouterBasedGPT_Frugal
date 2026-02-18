@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { getAnalyticsTracker, UsageInsights, AnalyticsData } from '@/lib/analytics/analyticsTracker';
 import { getCategoryById } from '@/lib/preferences/interestCategories';
 import {
@@ -12,7 +12,9 @@ import {
   DollarSign,
   Download,
   BarChart3,
-  Activity
+  Activity,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
 import {
   LineChart,
@@ -34,17 +36,76 @@ export default function AnalyticsPage() {
   const [insights, setInsights] = useState<UsageInsights | null>(null);
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [dataWarnings, setDataWarnings] = useState<string[]>([]);
+
+  const loadAnalyticsData = useCallback(() => {
+    try {
+      const tracker = getAnalyticsTracker();
+      const data = tracker.getAnalyticsData();
+      const insightsData = tracker.getInsights();
+
+      setAnalyticsData(data);
+      setInsights(insightsData);
+      setLastUpdated(new Date());
+      
+      // Validate data completeness
+      const warnings: string[] = [];
+      
+      const totalQueries = data.modelUsage.tier1 + data.modelUsage.tier2 + data.modelUsage.tier3;
+      
+      // Check if token tracking seems incomplete (only warn if we have model usage but no tokens)
+      // Note: Some queries (canned responses, cache hits) don't use tokens, so this is expected
+      if (totalQueries > 10 && data.tokenUsage.totalTokens === 0) {
+        warnings.push('Token usage data may be incomplete. Some queries may not have tracked tokens.');
+      }
+      
+      // Check if model usage doesn't match search count
+      // Note: Canned responses and cache hits are tracked as searches but don't use models (this is correct)
+      // So we expect searches to be >= model usage, not equal
+      // Only warn if there's a significant mismatch (more than 50% of searches have no model usage)
+      const expectedModelUsage = Math.floor(data.searches.total * 0.3); // Expect at least 30% to use models (accounting for canned/cache)
+      if (data.searches.total > 5 && totalQueries < expectedModelUsage) {
+        warnings.push('Model usage data may be incomplete. Many searches were tracked but model usage appears low.');
+      }
+      
+      // Check if tier3 is defined but never used (expected, but worth noting)
+      if (data.modelUsage.tier3 > 0) {
+        // Tier 3 is tracked, which is good
+      } else if (totalQueries > 10) {
+        // After many queries, if tier3 is still 0, it's expected (system doesn't use tier3)
+      }
+      
+      setDataWarnings(warnings);
+    } catch (error) {
+      console.error('[Analytics] Failed to load data:', error);
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    // Load analytics data
-    const tracker = getAnalyticsTracker();
-    const data = tracker.getAnalyticsData();
-    const insightsData = tracker.getInsights();
+    loadAnalyticsData();
+  }, [loadAnalyticsData]);
 
-    setAnalyticsData(data);
-    setInsights(insightsData);
-    setLoading(false);
-  }, []);
+  // Auto-refresh on window focus
+  useEffect(() => {
+    const handleFocus = () => {
+      if (!isRefreshing) {
+        loadAnalyticsData();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [loadAnalyticsData, isRefreshing]);
+
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    loadAnalyticsData();
+  };
 
   const handleExport = () => {
     const tracker = getAnalyticsTracker();
@@ -119,14 +180,53 @@ export default function AnalyticsPage() {
               Track your usage patterns and insights
             </p>
           </div>
-          <button
-            onClick={handleExport}
-            className="flex items-center justify-center gap-2 px-4 py-2 bg-light-secondary dark:bg-dark-secondary hover:bg-light-200 dark:hover:bg-dark-200 rounded-lg transition-colors duration-200 whitespace-nowrap"
-          >
-            <Download size={16} />
-            <span className="text-sm font-medium">Export Data</span>
-          </button>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs text-black/50 dark:text-white/50">
+              <span>Last updated: {lastUpdated.toLocaleTimeString()}</span>
+              {isRefreshing ? (
+                <RefreshCw size={14} className="text-blue-500 animate-spin" />
+              ) : (
+                <span className="text-green-500">●</span>
+              )}
+            </div>
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-light-secondary dark:bg-dark-secondary hover:bg-light-200 dark:hover:bg-dark-200 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors duration-200 whitespace-nowrap"
+            >
+              <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
+              <span className="text-sm font-medium">
+                {isRefreshing ? 'Refreshing...' : 'Refresh'}
+              </span>
+            </button>
+            <button
+              onClick={handleExport}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-light-secondary dark:bg-dark-secondary hover:bg-light-200 dark:hover:bg-dark-200 rounded-lg transition-colors duration-200 whitespace-nowrap"
+            >
+              <Download size={16} />
+              <span className="text-sm font-medium">Export Data</span>
+            </button>
+          </div>
         </div>
+
+        {/* Data Validation Warnings */}
+        {dataWarnings.length > 0 && (
+          <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+            <div className="flex items-start gap-3">
+              <AlertCircle size={20} className="text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-yellow-800 dark:text-yellow-200 mb-1">
+                  Data Completeness Notice
+                </h3>
+                <ul className="text-sm text-yellow-700 dark:text-yellow-300 space-y-1">
+                  {dataWarnings.map((warning, index) => (
+                    <li key={index}>• {warning}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-8">
@@ -257,24 +357,25 @@ export default function AnalyticsPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <ModelCard
               title="Tier 1 (Fast)"
-              model="granite-3.1-2b"
+              model="granite4:micro"
               count={analyticsData.modelUsage.tier1}
               color="bg-blue-500"
-              cost="$0.001/query"
+              cost="1.0x cost"
             />
             <ModelCard
-              title="Tier 2 (Balanced)"
-              model="granite-3.1-8b"
+              title="Tier 2 (Smart)"
+              model="qwen3:1.7b"
               count={analyticsData.modelUsage.tier2}
               color="bg-purple-500"
-              cost="$0.005/query"
+              cost="2.5x cost"
             />
             <ModelCard
-              title="Tier 3 (Smart)"
+              title="Tier 3 (Not Used)"
               model="llama-3.3-70b"
               count={analyticsData.modelUsage.tier3}
               color="bg-orange-500"
-              cost="$0.02/query"
+              cost="Not configured"
+              note={analyticsData.modelUsage.tier3 === 0 ? "System currently uses Tier 1 & 2 only" : undefined}
             />
           </div>
         </div>
@@ -330,12 +431,14 @@ function ModelCard({
   count,
   color,
   cost,
+  note,
 }: {
   title: string;
   model: string;
   count: number;
   color: string;
   cost: string;
+  note?: string;
 }) {
   return (
     <div className="bg-light-primary dark:bg-dark-primary rounded-xl p-4">
@@ -349,7 +452,12 @@ function ModelCard({
       <div className="text-xs text-black/60 dark:text-white/60 mb-1">
         {model}
       </div>
-      <div className="text-xs text-black/50 dark:text-white/50">{cost}</div>
+      <div className="text-xs text-black/50 dark:text-white/50 mb-1">{cost}</div>
+      {note && (
+        <div className="text-xs text-black/40 dark:text-white/40 italic mt-2 pt-2 border-t border-light-200 dark:border-dark-200">
+          {note}
+        </div>
+      )}
     </div>
   );
 }

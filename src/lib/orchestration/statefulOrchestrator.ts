@@ -12,7 +12,7 @@ import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { Embeddings } from '@langchain/core/embeddings';
 import EventEmitter from 'events';
 import { FrugalRouter, RoutingPath } from '../routing/frugalRouter';
-import { SemanticCache } from '../cache/semanticCache';
+import { SemanticCache, getSemanticCache } from '../cache/semanticCache';
 import { MetaSearchAgentType } from '../search/metaSearchAgent';
 import { getContextStore } from '../context/contextStore';
 import {
@@ -32,8 +32,13 @@ import {
   formatEntitiesForPrompt,
 } from '../context/entityExtractor';
 import { summarizeConversation } from '../context/conversationSummarizer';
+import { getSoulLoader } from '../soul/soulLoader';
+import { getMemoryWriter } from '../memory/memoryWriter';
+import { getTranscriptWriter } from '../transcripts/transcriptWriter';
 import { globalMetricsTracker } from '../metrics/metricsTracker';
 import { getAnalyticsTracker } from '../analytics/analyticsTracker';
+import { getTierConfig } from '../models/tierConfig';
+import { getAvailableChatModelProviders } from '../providers';
 
 export interface StatefulOrchestrationMetrics {
   routingPath: RoutingPath;
@@ -54,18 +59,20 @@ export class StatefulOrchestrator {
   private semanticCache: SemanticCache;
   private ragAgent: MetaSearchAgentType;
   private contextStore = getContextStore();
+  private laneMap = new Map<string, Promise<void>>();
   
   constructor(
     ragAgent: MetaSearchAgentType,
     embeddings: Embeddings
   ) {
-    this.frugalRouter = new FrugalRouter();
-    this.semanticCache = new SemanticCache(embeddings);
+    this.frugalRouter = new FrugalRouter(embeddings);
+    this.semanticCache = getSemanticCache(embeddings);
     this.ragAgent = ragAgent;
   }
   
   /**
-   * Handle a user query with full stateful context management
+   * Handle a user query with full stateful context management.
+   * Returns an emitter immediately; processing is queued per-session via laneMap.
    */
   async handleQuery(
     query: string,
@@ -75,46 +82,73 @@ export class StatefulOrchestrator {
     embeddings: Embeddings,
     optimizationMode: 'speed' | 'balanced' | 'quality',
     fileIds: string[],
-    systemInstructions: string
+    systemInstructions: string,
+    maxHistoryTurns: number = 2
   ): Promise<EventEmitter> {
     const emitter = new EventEmitter();
+    const sessionId = chatId;
+    const prev = this.laneMap.get(sessionId) ?? Promise.resolve();
+    const next = prev.then(() =>
+      this._processQuery(emitter, query, chatId, history, llm, embeddings, optimizationMode, fileIds, systemInstructions)
+    );
+    this.laneMap.set(sessionId, next.catch(() => {}));
+    return emitter;
+  }
+
+  /**
+   * Core query processing logic — runs sequentially within a session lane.
+   */
+  private async _processQuery(
+    emitter: EventEmitter,
+    query: string,
+    chatId: string,
+    history: BaseMessage[],
+    llm: BaseChatModel,
+    embeddings: Embeddings,
+    optimizationMode: 'speed' | 'balanced' | 'quality',
+    fileIds: string[],
+    systemInstructions: string
+  ): Promise<void> {
     const startTime = Date.now();
     const sessionId = chatId; // Use chatId as sessionId
-    
+
     try {
       // STEP 1: Load or create context payload
       let contextPayload = await this.contextStore.get(sessionId);
-      
+
       if (!contextPayload) {
-        console.log(`[StatefulOrchestrator] Creating new context for session: ${sessionId}`);
         contextPayload = createContextPayload(sessionId, chatId, query);
-      } else {
-        console.log(`[StatefulOrchestrator] Loaded existing context for session: ${sessionId}`);
       }
-      
-      // STEP 2: Route the query
+
+      // STEP 2: Inject SOUL personality into system instructions
+      const soul = getSoulLoader().getPersonality();
+      const effectiveSystemInstructions = soul
+        ? `${soul}\n\n${systemInstructions}`
+        : systemInstructions;
+
+      // STEP 3: Route the query
       const routingDecision = await this.frugalRouter.route(query, history);
       console.log(`[StatefulOrchestrator] Routing: ${routingDecision.path} (confidence: ${routingDecision.confidence})`);
-      
-      // STEP 3: Extract entities from the query
+
+      // STEP 4: Extract entities from the query
       const newEntities = extractEntities(query, contextPayload.turnCount + 1);
       contextPayload.extractedEntities = mergeEntities(
         contextPayload.extractedEntities,
         newEntities
       );
       console.log(`[StatefulOrchestrator] Extracted ${newEntities.size} entities`);
-      
-      // STEP 4: Handle based on routing path
+
+      // STEP 5: Handle based on routing path
       let response: string;
       let sources: any[] = [];
       let modelTier: 'tier1' | 'tier2' | undefined;
       let cacheHit = false;
-      
+
       switch (routingDecision.path) {
         case 'canned':
           ({ response, sources } = await this.handleCannedResponse(query));
           break;
-          
+
         case 'cache':
           ({ response, sources, cacheHit } = await this.handleCacheQuery(
             query,
@@ -124,10 +158,11 @@ export class StatefulOrchestrator {
             embeddings,
             optimizationMode,
             fileIds,
-            systemInstructions
+            effectiveSystemInstructions,
+            emitter
           ));
           break;
-          
+
         case 'rag-tier1':
         case 'rag-tier2':
           modelTier = routingDecision.path === 'rag-tier2' ? 'tier2' : 'tier1';
@@ -139,12 +174,13 @@ export class StatefulOrchestrator {
             embeddings,
             optimizationMode,
             fileIds,
-            systemInstructions,
-            modelTier
+            effectiveSystemInstructions,
+            modelTier,
+            emitter
           ));
           break;
       }
-      
+
       // STEP 5: Update context payload
       const userTurn: ConversationTurn = {
         role: 'user',
@@ -153,7 +189,7 @@ export class StatefulOrchestrator {
         turnNumber: contextPayload.turnCount + 1,
         tokenCount: estimateTokenCount(query),
       };
-      
+
       const assistantTurn: ConversationTurn = {
         role: 'assistant',
         content: response,
@@ -161,71 +197,96 @@ export class StatefulOrchestrator {
         turnNumber: contextPayload.turnCount + 2,
         tokenCount: estimateTokenCount(response),
       };
-      
+
       contextPayload.conversationHistory.push(userTurn, assistantTurn);
       contextPayload.turnCount += 2;
       contextPayload.classifiedIntent = routingDecision.path;
-      
-      // STEP 6: Check if summarization is needed
+
+      // STEP 7: Check if summarization is needed
       let summarizationTriggered = false;
       if (needsSummarization(contextPayload, 5)) {
-        console.log('[StatefulOrchestrator] Triggering conversation summarization');
         const turnsToSummarize = contextPayload.conversationHistory.slice(
           contextPayload.lastSummarizedTurn
         );
-        
+
+        // Flush pre-compaction turns to JSONL transcript before overwriting
+        const transcriptWriter = getTranscriptWriter();
+        for (const turn of turnsToSummarize) {
+          await transcriptWriter.append({
+            sessionId,
+            eventType: turn.role === 'user' ? 'user_message' : 'assistant_response',
+            timestamp: turn.timestamp,
+            payload: { content: turn.content, turnNumber: turn.turnNumber },
+          });
+        }
+
         contextPayload.conversationSummary = await summarizeConversation(
           turnsToSummarize,
           contextPayload.conversationSummary,
           llm
         );
-        
+
+        // Append summary to MEMORY.md after compaction
+        getMemoryWriter().appendSummary(sessionId, contextPayload.conversationSummary, Date.now());
+
+        // Append compaction event to transcript
+        await transcriptWriter.append({
+          sessionId,
+          eventType: 'compaction',
+          timestamp: Date.now(),
+          payload: { summary: contextPayload.conversationSummary, turnCount: turnsToSummarize.length },
+        });
+
         contextPayload.lastSummarizedTurn = contextPayload.turnCount;
         summarizationTriggered = true;
       }
-      
-      // STEP 7: Calculate costs and savings
+
+      // STEP 8: Calculate costs and savings
       const inputTokens = estimateTokenCount(query);
       const outputTokens = estimateTokenCount(response);
       const cost = calculateCost(inputTokens, outputTokens, modelTier || 'tier1');
-      
+
       contextPayload.totalTokensUsed += inputTokens + outputTokens;
       contextPayload.estimatedCost += cost;
-      
+
       // Calculate token savings from summarization
       const fullHistoryLength = contextPayload.conversationHistory
         .map(t => t.content.length)
         .reduce((a, b) => a + b, 0);
       const summaryLength = contextPayload.conversationSummary.length;
       const tokensSaved = Math.max(0, Math.ceil((fullHistoryLength - summaryLength) / 4));
-      
-      // STEP 8: Save updated context
+
+      // STEP 9: Save updated context
       await this.contextStore.set(sessionId, contextPayload);
       console.log(`[StatefulOrchestrator] Saved context for session: ${sessionId}`);
-      
-      // STEP 9: Emit response
+
+      // STEP 10: Emit response
       const latencyMs = Date.now() - startTime;
-      
+
       emitter.emit('data', JSON.stringify({
         type: 'sources',
         data: sources,
       }));
-      
-      emitter.emit('data', JSON.stringify({
-        type: 'response',
-        data: response,
-        metadata: {
-          cacheHit,
-          modelTier,
-          routingPath: routingDecision.path,
-          entitiesTracked: contextPayload.extractedEntities.size,
-          summarizationTriggered,
-          tokensSaved,
-          estimatedCost: cost,
-          latencyMs,
-        },
-      }));
-      
+
+      // Note: response tokens were already streamed inline by handleRAGQuery.
+      // For canned/cache-hit paths, emit the full response now.
+      if (routingDecision.path === 'canned' || cacheHit) {
+        emitter.emit('data', JSON.stringify({
+          type: 'response',
+          data: response,
+          metadata: {
+            cacheHit,
+            modelTier,
+            routingPath: routingDecision.path,
+            entitiesTracked: contextPayload.extractedEntities.size,
+            summarizationTriggered,
+            tokensSaved,
+            estimatedCost: cost,
+            latencyMs,
+          },
+        }));
+      }
+
       // Log metrics
       globalMetricsTracker.logQuery({
         timestamp: Date.now(),
@@ -235,20 +296,18 @@ export class StatefulOrchestrator {
         modelTier,
         latencyMs,
       });
-      
+
       // Track analytics
       const analytics = getAnalyticsTracker();
       analytics.trackModelUse(modelTier === 'tier2' ? 2 : 1);
       analytics.trackTokens(inputTokens, outputTokens, modelTier);
-      
+
       emitter.emit('end');
-      
+
     } catch (error) {
       console.error('[StatefulOrchestrator] Error:', error);
       emitter.emit('error', error);
     }
-    
-    return emitter;
   }
   
   /**
@@ -275,7 +334,8 @@ export class StatefulOrchestrator {
     embeddings: Embeddings,
     optimizationMode: 'speed' | 'balanced' | 'quality',
     fileIds: string[],
-    systemInstructions: string
+    systemInstructions: string,
+    outerEmitter?: EventEmitter
   ): Promise<{
     response: string;
     sources: any[];
@@ -285,7 +345,6 @@ export class StatefulOrchestrator {
     const cached = await this.semanticCache.get(query);
     
     if (cached) {
-      console.log('[StatefulOrchestrator] Cache hit!');
       return {
         response: cached.response,
         sources: cached.sources,
@@ -294,7 +353,6 @@ export class StatefulOrchestrator {
     }
     
     // Cache miss - fall through to RAG
-    console.log('[StatefulOrchestrator] Cache miss, falling back to RAG');
     const result = await this.handleRAGQuery(
       query,
       contextPayload,
@@ -304,14 +362,17 @@ export class StatefulOrchestrator {
       optimizationMode,
       fileIds,
       systemInstructions,
-      'tier1'
+      'tier1',
+      outerEmitter
     );
     
     return { ...result, cacheHit: false };
   }
   
   /**
-   * Handle RAG pipeline with context-aware enhancements
+   * Handle RAG pipeline with context-aware enhancements.
+   * Pipes each response token directly to the outer emitter as it arrives (true streaming).
+   * Keeps a fullResponse accumulator for post-stream cache/context writes.
    */
   private async handleRAGQuery(
     query: string,
@@ -322,11 +383,43 @@ export class StatefulOrchestrator {
     optimizationMode: 'speed' | 'balanced' | 'quality',
     fileIds: string[],
     systemInstructions: string,
-    modelTier: 'tier1' | 'tier2'
+    modelTier: 'tier1' | 'tier2',
+    outerEmitter?: EventEmitter
   ): Promise<{
     response: string;
     sources: any[];
   }> {
+    // Check cache first
+    const cached = await this.semanticCache.get(query);
+    
+    if (cached) {
+      return {
+        response: cached.response,
+        sources: cached.sources,
+      };
+    }
+    
+    // Select the appropriate model based on tier
+    let tierLLM = llm; // Default to provided LLM
+    
+    try {
+      const tierConfig = getTierConfig(modelTier);
+      
+      // Get available model providers
+      const modelProviders = await getAvailableChatModelProviders();
+      
+      // Try to get the tier-specific model
+      if (modelProviders[tierConfig.provider] && 
+          modelProviders[tierConfig.provider][tierConfig.modelName]) {
+        tierLLM = modelProviders[tierConfig.provider][tierConfig.modelName].model as BaseChatModel;
+      } else {
+        console.warn(`[StatefulOrchestrator] Tier ${modelTier} model (${tierConfig.modelName}) not available, using default`);
+      }
+    } catch (error) {
+      console.error(`[StatefulOrchestrator] Error selecting tier model:`, error);
+      // Fall back to provided LLM
+    }
+    
     // Get compact context for LLM
     const compactContext = getCompactContext(contextPayload, 2);
     const relevantEntities = getRelevantEntities(
@@ -336,9 +429,8 @@ export class StatefulOrchestrator {
     
     // Enhance query with entities for better RAG retrieval
     const enhancedQuery = enhanceQueryWithEntities(query, relevantEntities);
-    console.log(`[StatefulOrchestrator] Enhanced query: ${enhancedQuery}`);
     
-    // Build minimal context history (summary + last 2 turns)
+    // Build minimal context history (summary + last N turns, where N = maxHistoryTurns)
     const minimalHistory: BaseMessage[] = [];
     
     if (compactContext.summary) {
@@ -362,18 +454,18 @@ export class StatefulOrchestrator {
         ? `\n\nContext entities being tracked:\n${formatEntitiesForPrompt(relevantEntities)}`
         : '');
     
-    // Execute RAG with minimal context
+    // Execute RAG with minimal context and tier-specific model
     const ragEmitter = await this.ragAgent.searchAndAnswer(
       enhancedQuery,
       minimalHistory,
-      llm,
+      tierLLM,
       embeddings,
       optimizationMode,
       fileIds,
       enhancedSystemInstructions
     );
     
-    // Collect response
+    // Pipe tokens directly to outer emitter as they arrive (true streaming)
     return new Promise((resolve, reject) => {
       let fullResponse = '';
       let sources: any[] = [];
@@ -383,6 +475,10 @@ export class StatefulOrchestrator {
           const parsedData = JSON.parse(data);
           
           if (parsedData.type === 'response') {
+            // Pipe token immediately to outer emitter instead of accumulating first
+            if (outerEmitter) {
+              outerEmitter.emit('data', JSON.stringify({ type: 'response', data: parsedData.data }));
+            }
             fullResponse += parsedData.data;
           } else if (parsedData.type === 'sources') {
             sources = parsedData.data;
@@ -393,7 +489,7 @@ export class StatefulOrchestrator {
       });
       
       ragEmitter.on('end', async () => {
-        // Cache the response
+        // Cache the response after streaming completes
         if (fullResponse && sources) {
           await this.semanticCache.set(query, fullResponse, sources);
         }

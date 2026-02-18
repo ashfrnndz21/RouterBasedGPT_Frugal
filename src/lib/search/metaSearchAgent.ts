@@ -202,6 +202,25 @@ class MetaSearchAgent implements MetaSearchAgentType {
             Make sure to answer the query in the summary.
           `);
 
+              // Check for token usage information from Ollama
+              if (res.response_metadata) {
+                console.log('[MetaSearchAgent] Response metadata:', JSON.stringify(res.response_metadata, null, 2));
+                if (res.response_metadata.prompt_eval_count !== undefined) {
+                  console.log('[MetaSearchAgent] Input tokens (prompt_eval_count):', res.response_metadata.prompt_eval_count);
+                }
+                if (res.response_metadata.eval_count !== undefined) {
+                  console.log('[MetaSearchAgent] Output tokens (eval_count):', res.response_metadata.eval_count);
+                }
+              }
+              if (res.usage_metadata) {
+                console.log('[MetaSearchAgent] Usage metadata:', JSON.stringify(res.usage_metadata, null, 2));
+              }
+              // Log all available properties for debugging (only first time to avoid spam)
+              if (docGroups.indexOf(doc) === 0) {
+                console.log('[MetaSearchAgent] Response object keys:', Object.keys(res));
+                console.log('[MetaSearchAgent] Response type:', res.constructor.name);
+              }
+
               const document = new Document({
                 pageContent: res.content as string,
                 metadata: {
@@ -448,7 +467,51 @@ class MetaSearchAgent implements MetaSearchAgentType {
     stream: AsyncGenerator<StreamEvent, any, any>,
     emitter: eventEmitter,
   ) {
+    let tokenUsage: { inputTokens: number; outputTokens: number } | null = null;
+    
     for await (const event of stream) {
+      // Check for LLM end event which contains token usage info
+      if (event.event === 'on_llm_end') {
+        // Extract token usage from Ollama response
+        // Try multiple paths to get token counts
+        const responseMetadata = event.data?.output?.generations?.[0]?.[0]?.message?.kwargs?.response_metadata;
+        const usageMetadata = event.data?.output?.generations?.[0]?.[0]?.message?.kwargs?.usage_metadata;
+        const llmOutput = event.data?.output?.llmOutput;
+        
+        if (responseMetadata) {
+          // Ollama provides prompt_eval_count and eval_count
+          const inputTokens = responseMetadata.prompt_eval_count;
+          const outputTokens = responseMetadata.eval_count;
+          
+          if (inputTokens !== undefined && outputTokens !== undefined) {
+            tokenUsage = { inputTokens, outputTokens };
+            console.log(`[MetaSearchAgent] Token usage from Ollama: ${inputTokens} input, ${outputTokens} output`);
+            // Emit token usage info for tracking
+            emitter.emit('tokenUsage', tokenUsage);
+          }
+        } else if (usageMetadata) {
+          // Fallback to usage_metadata if available
+          const inputTokens = usageMetadata.input_tokens;
+          const outputTokens = usageMetadata.output_tokens;
+          
+          if (inputTokens !== undefined && outputTokens !== undefined) {
+            tokenUsage = { inputTokens, outputTokens };
+            console.log(`[MetaSearchAgent] Token usage from usage_metadata: ${inputTokens} input, ${outputTokens} output`);
+            emitter.emit('tokenUsage', tokenUsage);
+          }
+        } else if (llmOutput?.tokenUsage) {
+          // Fallback to llmOutput.tokenUsage
+          const inputTokens = llmOutput.tokenUsage.promptTokens;
+          const outputTokens = llmOutput.tokenUsage.completionTokens;
+          
+          if (inputTokens !== undefined && outputTokens !== undefined) {
+            tokenUsage = { inputTokens, outputTokens };
+            console.log(`[MetaSearchAgent] Token usage from llmOutput: ${inputTokens} input, ${outputTokens} output`);
+            emitter.emit('tokenUsage', tokenUsage);
+          }
+        }
+      }
+      
       if (
         event.event === 'on_chain_end' &&
         event.name === 'FinalSourceRetriever'
@@ -471,6 +534,13 @@ class MetaSearchAgent implements MetaSearchAgentType {
         event.event === 'on_chain_end' &&
         event.name === 'FinalResponseGenerator'
       ) {
+        // Emit token usage if we captured it
+        if (tokenUsage) {
+          emitter.emit('data', JSON.stringify({
+            type: 'tokenUsage',
+            data: tokenUsage,
+          }));
+        }
         emitter.emit('end');
       }
     }

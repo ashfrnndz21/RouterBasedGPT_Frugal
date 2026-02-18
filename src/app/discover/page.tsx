@@ -337,7 +337,7 @@ const Page = () => {
             <div className="flex items-center justify-center gap-3">
               <Globe2Icon size={48} className="truegpt-gradient-text" />
               <h1 className="text-5xl font-black truegpt-gradient-text tracking-tight">
-                TrueDiscovery
+                PTT Discovery
               </h1>
             </div>
             <div className="flex flex-row items-center space-x-2 overflow-x-auto">

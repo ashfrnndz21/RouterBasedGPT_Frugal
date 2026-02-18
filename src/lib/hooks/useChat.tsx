@@ -15,6 +15,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useCallback,
 } from 'react';
 import crypto from 'crypto';
 import { useSearchParams } from 'next/navigation';
@@ -115,6 +116,15 @@ const checkConfig = async (
       return res.json();
     });
 
+    console.log('[useChat] Fetched providers:', {
+      chatProviders: Object.keys(providers.chatModelProviders || {}),
+      embeddingProviders: Object.keys(providers.embeddingModelProviders || {}),
+      embeddingModels: providers.embeddingModelProviders ? 
+        Object.keys(providers.embeddingModelProviders).flatMap(provider => 
+          Object.keys(providers.embeddingModelProviders[provider] || {})
+        ) : [],
+    });
+
     if (
       !chatModel ||
       !chatModelProvider ||
@@ -126,7 +136,10 @@ const checkConfig = async (
         const chatModelProvidersKeys = Object.keys(chatModelProviders);
 
         if (!chatModelProviders || chatModelProvidersKeys.length === 0) {
-          return toast.error('No chat models available');
+          toast.error('No chat models available');
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
         } else {
           chatModelProvider =
             chatModelProvidersKeys.find(
@@ -142,7 +155,16 @@ const checkConfig = async (
           toast.error(
             "Looks like you haven't configured any chat model providers. Please configure them from the settings page or the config file.",
           );
-          return setHasError(true);
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
+        }
+
+        if (!chatModelProviders[chatModelProvider] || Object.keys(chatModelProviders[chatModelProvider]).length === 0) {
+          toast.error(`No models available for provider: ${chatModelProvider}`);
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
         }
 
         chatModel = Object.keys(chatModelProviders[chatModelProvider])[0];
@@ -154,10 +176,20 @@ const checkConfig = async (
         if (
           !embeddingModelProviders ||
           Object.keys(embeddingModelProviders).length === 0
-        )
-          return toast.error('No embedding models available');
+        ) {
+          toast.error('No embedding models available');
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
+        }
 
         embeddingModelProvider = Object.keys(embeddingModelProviders)[0];
+        if (!embeddingModelProvider || !embeddingModelProviders[embeddingModelProvider] || Object.keys(embeddingModelProviders[embeddingModelProvider]).length === 0) {
+          toast.error('No embedding models available');
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
+        }
         embeddingModel = Object.keys(
           embeddingModelProviders[embeddingModelProvider],
         )[0];
@@ -196,16 +228,23 @@ const checkConfig = async (
           toast.error(
             "Looks like you haven't configured any chat model providers. Please configure them from the settings page or the config file.",
           );
-          return setHasError(true);
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
         }
 
-        chatModel = Object.keys(
-          chatModelProviders[
-            Object.keys(chatModelProviders[chatModelProvider]).length > 0
-              ? chatModelProvider
-              : Object.keys(chatModelProviders)[0]
-          ],
-        )[0];
+        const fallbackProvider = Object.keys(chatModelProviders[chatModelProvider]).length > 0
+          ? chatModelProvider
+          : Object.keys(chatModelProviders)[0];
+
+        if (!fallbackProvider || !chatModelProviders[fallbackProvider] || Object.keys(chatModelProviders[fallbackProvider]).length === 0) {
+          toast.error('No chat models available');
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
+        }
+
+        chatModel = Object.keys(chatModelProviders[fallbackProvider])[0];
 
         localStorage.setItem('chatModel', chatModel);
       }
@@ -220,14 +259,40 @@ const checkConfig = async (
 
       if (
         embeddingModelProvider &&
+        embeddingModelProviders[embeddingModelProvider] &&
         !embeddingModelProviders[embeddingModelProvider][embeddingModel]
       ) {
-        embeddingModel = Object.keys(
-          embeddingModelProviders[embeddingModelProvider],
-        )[0];
+        const availableModels = Object.keys(embeddingModelProviders[embeddingModelProvider]);
+        if (availableModels.length === 0) {
+          toast.error(`No embedding models available for provider: ${embeddingModelProvider}`);
+          setHasError(true);
+          setIsConfigReady(false);
+          return;
+        }
+        embeddingModel = availableModels[0];
         localStorage.setItem('embeddingModel', embeddingModel);
       }
     }
+
+    if (!chatModel || !chatModelProvider || !embeddingModel || !embeddingModelProvider) {
+      console.error('[useChat] Missing required model configuration:', {
+        chatModel,
+        chatModelProvider,
+        embeddingModel,
+        embeddingModelProvider,
+      });
+      toast.error('Failed to configure models. Please check your settings.');
+      setHasError(true);
+      setIsConfigReady(false);
+      return;
+    }
+
+    console.log('[useChat] Configuration ready:', {
+      chatModel,
+      chatModelProvider,
+      embeddingModel,
+      embeddingModelProvider,
+    });
 
     setChatModelProvider({
       name: chatModel!,
@@ -395,6 +460,7 @@ export const ChatProvider = ({
   const sessionSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const sessionStartedRef = useRef<boolean>(false);
   const sessionQueryCountRef = useRef<number>(0);
+  const initialMessageSentRef = useRef<boolean>(false);
 
   const chatTurns = useMemo((): ChatTurn[] => {
     return messages.filter(
@@ -482,8 +548,8 @@ export const ChatProvider = ({
         ) as SourceMessage | undefined;
 
         let thinkingEnded = false;
-        let processedMessage = aiMessage?.content ?? '';
-        let speechMessage = aiMessage?.content ?? '';
+        let processedMessage = typeof aiMessage?.content === 'string' ? aiMessage.content : '';
+        let speechMessage = typeof aiMessage?.content === 'string' ? aiMessage.content : '';
         let suggestions: string[] = [];
 
         if (aiMessage) {
@@ -501,7 +567,7 @@ export const ChatProvider = ({
             }
           }
 
-          if (aiMessage.content.includes('</think>')) {
+          if (typeof aiMessage.content === 'string' && aiMessage.content.includes('</think>')) {
             thinkingEnded = true;
           }
 
@@ -543,10 +609,10 @@ export const ChatProvider = ({
               },
             );
             console.log('[useChat] Processed message:', processedMessage.substring(0, 200));
-            speechMessage = aiMessage.content.replace(regex, '');
+            speechMessage = typeof aiMessage.content === 'string' ? aiMessage.content.replace(regex, '') : '';
           } else {
             processedMessage = processedMessage.replace(regex, '');
-            speechMessage = aiMessage.content.replace(regex, '');
+            speechMessage = typeof aiMessage.content === 'string' ? aiMessage.content.replace(regex, '') : '';
           }
 
           const suggestionMessage = messages.find(
@@ -616,8 +682,10 @@ export const ChatProvider = ({
       setIsMessagesLoaded(true);
       setChatId(crypto.randomBytes(20).toString('hex'));
     }
+    // Reset initial message sent flag when chatId changes
+    initialMessageSentRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [chatId]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -674,33 +742,28 @@ export const ChatProvider = ({
     sendMessage(message.content, message.messageId, true);
   };
 
-  useEffect(() => {
-    if (isReady && initialMessage && isConfigReady) {
-      if (!isConfigReady) {
-        toast.error('Cannot send message before the configuration is ready');
-        return;
-      }
-      sendMessage(initialMessage);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConfigReady, isReady, initialMessage]);
-
-  const sendMessage: ChatContext['sendMessage'] = async (
+  const sendMessage: ChatContext['sendMessage'] = useCallback(async (
     message,
     messageId,
     rewrite = false,
   ) => {
+    // Validate message content
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      console.warn('[useChat] Attempted to send empty message, ignoring');
+      return;
+    }
+    
     if (loading) return;
     setLoading(true);
     setMessageAppeared(false);
 
-    if (messages.length <= 1) {
+    if (messagesRef.current.length <= 1) {
       window.history.replaceState(null, '', `/c/${chatId}`);
     }
 
     // Track session start on first message
     const analytics = getAnalyticsTracker();
-    if (!sessionStartedRef.current && messages.length === 0) {
+    if (!sessionStartedRef.current && messagesRef.current.length === 0) {
       analytics.trackSessionStart();
       sessionStartedRef.current = true;
     }
@@ -722,6 +785,7 @@ export const ChatProvider = ({
 
     let recievedMessage = '';
     let added = false;
+    let analyticsTracked = false; // Track if we've already recorded analytics for this response
 
     messageId = messageId ?? crypto.randomBytes(7).toString('hex');
 
@@ -743,12 +807,15 @@ export const ChatProvider = ({
         return;
       }
 
+      // Use the messageId from data, or fall back to the one we generated
+      const responseMessageId = data.messageId || messageId;
+
       if (data.type === 'sources') {
         console.log('[useChat] Received sources:', data.data.length, 'sources');
         setMessages((prevMessages) => [
           ...prevMessages,
           {
-            messageId: data.messageId,
+            messageId: responseMessageId,
             chatId: chatId!,
             role: 'source',
             sources: data.data,
@@ -762,13 +829,38 @@ export const ChatProvider = ({
 
       if (data.type === 'message') {
         console.log('[useChat] Received message chunk:', data.data);
+        
+        // Track analytics on first message chunk if metadata is available
+        // This handles cases where metadata comes with the response stream
+        if (!added && data.metadata && !analyticsTracked) {
+          const analytics = getAnalyticsTracker();
+          
+          // Track model usage if a model was actually used (not canned or cache)
+          if (data.metadata.modelTier && !data.metadata.cacheHit && data.metadata.routingPath !== 'canned') {
+            const tier = data.metadata.modelTier === 'tier2' ? 2 : 1;
+            analytics.trackModelUse(tier);
+            console.log('[useChat] Tracked model usage from response metadata:', tier);
+            analyticsTracked = true;
+          }
+          
+          // Track token usage if available
+          if (data.metadata.tokenUsage) {
+            analytics.trackTokens(
+              data.metadata.tokenUsage.inputTokens || 0,
+              data.metadata.tokenUsage.outputTokens || 0,
+              data.metadata.modelTier
+            );
+            console.log('[useChat] Tracked token usage from response metadata');
+          }
+        }
+        
         if (!added) {
           console.log('[useChat] Adding first message chunk');
           setMessages((prevMessages) => [
             ...prevMessages,
             {
               content: data.data,
-              messageId: data.messageId,
+              messageId: responseMessageId,
               chatId: chatId!,
               role: 'assistant',
               createdAt: new Date(),
@@ -782,7 +874,7 @@ export const ChatProvider = ({
           setMessages((prev) =>
             prev.map((message) => {
               if (
-                message.messageId === data.messageId &&
+                message.messageId === responseMessageId &&
                 message.role === 'assistant'
               ) {
                 return { 
@@ -799,8 +891,65 @@ export const ChatProvider = ({
         recievedMessage += data.data;
       }
 
+      if (data.type === 'outputBlocked') {
+        // Output guardrails blocked the response - replace the displayed message immediately
+        console.log('[useChat] Output guardrails blocked response:', data.reason);
+        toast.error('Response blocked by guardrails');
+        
+        setMessages((prev) =>
+          prev.map((message) => {
+            if (
+              message.messageId === responseMessageId &&
+              message.role === 'assistant'
+            ) {
+              return {
+                ...message,
+                content: data.safeMessage,
+                metadata: {
+                  ...(message.metadata || {}),
+                  error: true,
+                  violations: data.violations,
+                  reason: data.reason,
+                  code: 'OUTPUT_BLOCKED',
+                },
+              };
+            }
+            return message;
+          }),
+        );
+        
+        // Update received message for chat history
+        recievedMessage = data.safeMessage;
+        setLoading(false);
+        return;
+      }
+
       if (data.type === 'messageEnd') {
         console.log('[useChat] Message end, metadata:', data.metadata);
+        
+        // Track analytics on client side based on metadata
+        // This is necessary because server-side analytics tracking doesn't work (no localStorage)
+        if (data.metadata && !analyticsTracked) {
+          const analytics = getAnalyticsTracker();
+          
+          // Track model usage if a model was actually used (not canned or cache)
+          if (data.metadata.modelTier && !data.metadata.cacheHit && data.metadata.routingPath !== 'canned') {
+            const tier = data.metadata.modelTier === 'tier2' ? 2 : 1;
+            analytics.trackModelUse(tier);
+            console.log('[useChat] Tracked model usage:', tier, 'from metadata');
+            analyticsTracked = true;
+          }
+          
+          // Track token usage if available
+          if (data.metadata.tokenUsage) {
+            analytics.trackTokens(
+              data.metadata.tokenUsage.inputTokens || 0,
+              data.metadata.tokenUsage.outputTokens || 0,
+              data.metadata.modelTier
+            );
+            console.log('[useChat] Tracked token usage from metadata:', data.metadata.tokenUsage);
+          }
+        }
         
         // Update the last assistant message with final metadata
         if (data.metadata) {
@@ -883,9 +1032,68 @@ export const ChatProvider = ({
       }
     };
 
-    const messageIndex = messages.findIndex((m) => m.messageId === messageId);
+    const messageIndex = messagesRef.current.findIndex((m) => m.messageId === messageId);
 
     console.log('[Multilingual] Sending message with language:', language);
+
+    // Check if we're in a workspace and search documents for RAG
+    let enhancedSystemInstructions = localStorage.getItem('systemInstructions') || '';
+    const currentWorkspaceId = localStorage.getItem('currentWorkspaceId');
+    const currentConversationId = localStorage.getItem('currentConversationId');
+    
+    if (currentWorkspaceId) {
+      try {
+        console.log('[useChat] Fetching workspace documents for conversation:', currentConversationId || 'none');
+        
+        // Step 1: Always get recent document previews (baseline context) - conversation-specific
+        const previewUrl = `/api/workspaces/${currentWorkspaceId}/documents/previews${currentConversationId ? `?conversationId=${currentConversationId}` : ''}`;
+        const previewRes = await fetch(previewUrl);
+        const previewData = previewRes.ok ? await previewRes.json() : { previews: [] };
+        
+        // Step 2: Try semantic search for targeted results - conversation-specific
+        const searchRes = await fetch(`/api/workspaces/${currentWorkspaceId}/documents/search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            query: message, 
+            topK: 3, 
+            threshold: 0.3,
+            conversationId: currentConversationId 
+          }),
+        });
+        const searchData = searchRes.ok ? await searchRes.json() : { results: [] };
+        
+        // Step 3: Build combined context
+        let documentContext = '';
+        
+        // Always include recent document previews (baseline awareness) - from this conversation
+        if (previewData.previews && previewData.previews.length > 0) {
+          documentContext += '--- CONVERSATION DOCUMENTS (Uploaded in this chat) ---\n';
+          documentContext += 'The following documents were uploaded in this conversation:\n\n';
+          previewData.previews.forEach((p: any, i: number) => {
+            documentContext += `[Document ${i + 1}: ${p.filename}]\n${p.preview}\n\n`;
+          });
+          console.log('[useChat] Added', previewData.previews.length, 'document previews from this conversation');
+        }
+        
+        // Add semantic search results if available (targeted excerpts)
+        if (searchData.results && searchData.results.length > 0) {
+          documentContext += '\n--- SEMANTICALLY RELEVANT EXCERPTS ---\n';
+          documentContext += 'The following excerpts are most relevant to your question:\n\n';
+          searchData.results.forEach((r: any, i: number) => {
+            documentContext += `[Relevant excerpt from ${r.filename}]\n${r.content}\n\n`;
+          });
+          console.log('[useChat] Added', searchData.results.length, 'semantic search results');
+        }
+        
+        // Add to system instructions if we have any document context
+        if (documentContext) {
+          enhancedSystemInstructions += `\n\n${documentContext}--- END OF DOCUMENTS ---\n\nWhen answering, cite the document names when using information from them.`;
+        }
+      } catch (error) {
+        console.warn('[useChat] Failed to fetch workspace documents:', error);
+      }
+    }
 
     const res = await fetch('/api/chat', {
       method: 'POST',
@@ -914,10 +1122,67 @@ export const ChatProvider = ({
           name: embeddingModelProvider.name,
           provider: embeddingModelProvider.provider,
         },
-        systemInstructions: localStorage.getItem('systemInstructions'),
+        systemInstructions: enhancedSystemInstructions,
         language: language,
+        maxHistoryTurns: (() => {
+          const stored = localStorage.getItem('maxHistoryTurns');
+          const value = stored ? parseInt(stored, 10) : 2;
+          // Ensure value is within valid range
+          return isNaN(value) || value < 1 || value > 50 ? 2 : value;
+        })(),
       }),
     });
+
+    // Handle non-OK responses (guardrails blocks, rate limits, etc.)
+    if (!res.ok) {
+      setLoading(false);
+      try {
+        const errorData = await res.json();
+        const errorMessage = errorData.error || errorData.message || 'Request was blocked';
+        
+        // Show user-friendly error message
+        toast.error(errorMessage);
+        
+        // Add error message to chat for visibility
+        setMessages((prevMessages) => [
+          ...prevMessages,
+          {
+            content: errorMessage,
+            messageId: crypto.randomBytes(7).toString('hex'),
+            chatId: chatId!,
+            role: 'assistant',
+            createdAt: new Date(),
+            metadata: {
+              error: true,
+              code: errorData.code,
+              violations: errorData.violations,
+              metadata: errorData.metadata,
+            },
+          },
+        ]);
+        return;
+      } catch (parseError) {
+        // If JSON parsing fails, show generic error
+        const statusText = res.status === 403 
+          ? 'Request blocked by guardrails' 
+          : res.status === 429 
+          ? 'Rate limit exceeded. Please try again later.'
+          : `Request failed (${res.status})`;
+        toast.error(statusText);
+        setMessages((prevMessages) => [
+          ...prevMessages,
+          {
+            content: statusText,
+            messageId: crypto.randomBytes(7).toString('hex'),
+            chatId: chatId!,
+            role: 'assistant',
+            createdAt: new Date(),
+            metadata: { error: true },
+          },
+        ]);
+        return;
+      }
+    }
 
     if (!res.body) throw new Error('No response body');
 
@@ -949,7 +1214,24 @@ export const ChatProvider = ({
         console.warn('Incomplete JSON, waiting for next chunk...', error);
       }
     }
-  };
+  }, [
+    loading,
+    chatId,
+    focusMode,
+    optimizationMode,
+    fileIds,
+    chatModelProvider,
+    embeddingModelProvider,
+    chatHistory,
+    language,
+  ]);
+
+  useEffect(() => {
+    if (isReady && initialMessage && isConfigReady && !initialMessageSentRef.current) {
+      initialMessageSentRef.current = true;
+      sendMessage(initialMessage);
+    }
+  }, [isConfigReady, isReady, initialMessage, sendMessage]);
 
   return (
     <chatContext.Provider

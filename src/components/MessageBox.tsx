@@ -14,6 +14,7 @@ import {
 import Markdown, { MarkdownToJSX } from 'markdown-to-jsx';
 import Copy from './MessageActions/Copy';
 import Rewrite from './MessageActions/Rewrite';
+import Pin from './MessageActions/Pin';
 import MessageSources from './MessageSources';
 import SearchImages from './SearchImages';
 import SearchVideos from './SearchVideos';
@@ -71,7 +72,28 @@ const MessageBox = ({
       citation: {
         component: Citation,
       },
+      // Handle <references> tag - render as a hidden div to prevent React errors
+      references: {
+        component: ({ children, ...props }: any) => {
+          // Just ignore the references tag content
+          return null;
+        },
+      },
+      // Handle <question> tag from AI responses
+      question: {
+        component: ({ children, ...props }: any) => {
+          return <div className="font-semibold text-black dark:text-white mb-2">{children}</div>;
+        },
+      },
+      // Handle <answer> tag from AI responses
+      answer: {
+        component: ({ children, ...props }: any) => {
+          return <div className="text-black/80 dark:text-white/80">{children}</div>;
+        },
+      },
     },
+    // Force markdown-to-jsx to skip unknown tags or render them safely
+    forceInline: false,
   };
 
   return (
@@ -118,15 +140,42 @@ const MessageBox = ({
 
             {section.assistantMessage && (
               <>
-                <Markdown
-                  className={cn(
-                    'prose prose-h1:mb-3 prose-h2:mb-2 prose-h2:mt-6 prose-h2:font-[800] prose-h3:mt-4 prose-h3:mb-1.5 prose-h3:font-[600] dark:prose-invert prose-p:leading-relaxed prose-pre:p-0 font-[400]',
-                    'max-w-none break-words text-black dark:text-white',
-                  )}
-                  options={markdownOverrides}
-                >
-                  {parsedMessage}
-                </Markdown>
+                {/* Check if this is an error message from guardrails */}
+                {section.assistantMessage.metadata?.error ? (
+                  <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800">
+                    <div className="flex items-start gap-3">
+                      <div className="flex-shrink-0 mt-0.5">
+                        <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="text-red-900 dark:text-red-100 font-medium mb-1">Request Blocked</h4>
+                        <p className="text-sm text-red-800 dark:text-red-200">{parsedMessage}</p>
+                        {section.assistantMessage.metadata.violations && section.assistantMessage.metadata.violations.length > 0 && (
+                          <div className="mt-2 text-xs text-red-700 dark:text-red-300">
+                            <p className="font-medium mb-1">Reason:</p>
+                            <ul className="list-disc list-inside space-y-0.5">
+                              {section.assistantMessage.metadata.violations.map((v: any, i: number) => (
+                                <li key={i}>{v.reason}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <Markdown
+                    className={cn(
+                      'prose prose-h1:mb-3 prose-h2:mb-2 prose-h2:mt-6 prose-h2:font-[800] prose-h3:mt-4 prose-h3:mb-1.5 prose-h3:font-[600] dark:prose-invert prose-p:leading-relaxed prose-pre:p-0 font-[400]',
+                      'max-w-none break-words text-black dark:text-white',
+                    )}
+                    options={markdownOverrides}
+                  >
+                    {parsedMessage}
+                  </Markdown>
+                )}
 
                 {/* Response Badges */}
                 <ResponseBadges metadata={section.metadata} />
@@ -140,6 +189,11 @@ const MessageBox = ({
                       />
                     </div>
                     <div className="flex flex-row items-center space-x-1">
+                      <Pin
+                        messageId={section.assistantMessage.messageId}
+                        content={section.assistantMessage.content}
+                        conversationId={section.assistantMessage.chatId}
+                      />
                       <Copy
                         initialMessage={section.assistantMessage.content}
                         section={section}

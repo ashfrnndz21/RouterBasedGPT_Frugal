@@ -1,0 +1,78 @@
+services:
+  # ============================================
+  # Nginx Reverse Proxy with Authentication
+  # ============================================
+  nginx:
+    build:
+      context: ./dockers/nginx
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./dockers/nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+      # Optional: Mount SSL certificates for HTTPS
+      # - ./dockers/nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - frugalaigpt-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # SearxNG Search Engine
+  # ============================================
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    # Don't expose port externally - only accessible via app
+    expose:
+      - "8080"
+    networks:
+      - frugalaigpt-network
+    restart: unless-stopped
+
+  # ============================================
+  # FrugalAI Application
+  # ============================================
+  app:
+    image: frugalaigpt/frugalaigpt:main
+    build:
+      context: .
+      dockerfile: app.dockerfile
+    environment:
+      - SEARXNG_API_URL=http://searxng:8080
+      - DATA_DIR=/home/frugalaigpt
+      - NODE_ENV=production
+    # Don't expose port externally - only accessible via nginx
+    expose:
+      - "3000"
+    networks:
+      - frugalaigpt-network
+    volumes:
+      - backend-dbstore:/home/frugalaigpt/data
+      - uploads:/home/frugalaigpt/uploads
+      - ./config.toml:/home/frugalaigpt/config.toml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  frugalaigpt-network:
+    driver: bridge
+
+volumes:
+  backend-dbstore:
+  uploads:

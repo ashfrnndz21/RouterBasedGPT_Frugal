@@ -31,6 +31,24 @@ export async function summarizeConversation(
   try {
     // Use the LLM to create/update the summary
     const response = await llm.invoke(prompt);
+    
+    // Check for token usage information from Ollama
+    if (response.response_metadata) {
+      console.log('[Summarizer] Response metadata:', JSON.stringify(response.response_metadata, null, 2));
+      if (response.response_metadata.prompt_eval_count !== undefined) {
+        console.log('[Summarizer] Input tokens (prompt_eval_count):', response.response_metadata.prompt_eval_count);
+      }
+      if (response.response_metadata.eval_count !== undefined) {
+        console.log('[Summarizer] Output tokens (eval_count):', response.response_metadata.eval_count);
+      }
+    }
+    if (response.usage_metadata) {
+      console.log('[Summarizer] Usage metadata:', JSON.stringify(response.usage_metadata, null, 2));
+    }
+    // Log all available properties for debugging
+    console.log('[Summarizer] Response object keys:', Object.keys(response));
+    console.log('[Summarizer] Response type:', response.constructor.name);
+    
     const summary = typeof response.content === 'string' 
       ? response.content 
       : response.content.toString();

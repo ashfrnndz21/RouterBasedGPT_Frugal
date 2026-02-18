@@ -23,6 +23,7 @@ export const loadOllamaChatModels = async () => {
       headers: {
         'Content-Type': 'application/json',
       },
+      timeout: 10000, // 10 second timeout for remote connections
     });
 
     const { models } = res.data;
@@ -54,8 +55,14 @@ export const loadOllamaChatModels = async () => {
     });
 
     return chatModels;
-  } catch (err) {
-    console.error(`Error loading Ollama models: ${err}`);
+  } catch (err: any) {
+    if (err.code === 'ETIMEDOUT' || err.message?.includes('timeout')) {
+      console.error(`[Ollama] Connection timeout to ${ollamaApiEndpoint}. Check if the remote server is accessible.`);
+    } else if (err.code === 'ECONNREFUSED') {
+      console.error(`[Ollama] Connection refused to ${ollamaApiEndpoint}. Check if Ollama is running on the remote server.`);
+    } else {
+      console.error(`[Ollama] Error loading models from ${ollamaApiEndpoint}:`, err.message || err);
+    }
     return {};
   }
 };
@@ -66,39 +73,74 @@ export const loadOllamaEmbeddingModels = async () => {
 
   if (!ollamaApiEndpoint) return {};
 
-  // FRUGAL RAG: Only load embedding models we need
-  const ALLOWED_EMBEDDING_MODELS = ['nomic-embed-text:latest', 'nomic-embed-text'];
+  // FRUGAL RAG: Load embedding models - prefer better quality models for semantic similarity
+  // Priority order: qwen3-embedding:0.6b > bge-large > mxbai-embed-large > snowflake-arctic-embed > qwen3-embedding > nomic-embed-text
+  const ALLOWED_EMBEDDING_MODELS = [
+    'qwen3-embedding:0.6b',
+    'bge-large',
+    'mxbai-embed-large',
+    'snowflake-arctic-embed',
+    'qwen3-embedding',
+    'nomic-embed-text:latest',
+    'nomic-embed-text',
+  ];
 
   try {
     const res = await axios.get(`${ollamaApiEndpoint}/api/tags`, {
       headers: {
         'Content-Type': 'application/json',
       },
+      timeout: 10000, // 10 second timeout for remote connections
     });
 
     const { models } = res.data;
 
+    console.log(`[Ollama] Found ${models.length} total models, checking for embedding models...`);
     const embeddingModels: Record<string, EmbeddingModel> = {};
 
     // Only load embedding models that are in our allowed list
     models.forEach((model: any) => {
-      if (ALLOWED_EMBEDDING_MODELS.includes(model.model)) {
-        embeddingModels[model.model] = {
-          displayName: model.name,
+      const modelName = model.model || model.name;
+      // Check if model name matches (with or without :latest tag)
+      const baseModelName = modelName.replace(/:latest$/, '');
+      const matches = ALLOWED_EMBEDDING_MODELS.some(allowed => {
+        const allowedBase = allowed.replace(/:latest$/, '');
+        return baseModelName === allowedBase || modelName === allowed;
+      });
+      
+      if (matches) {
+        // Use the base name without :latest for consistency
+        const key = baseModelName;
+        embeddingModels[key] = {
+          displayName: model.name || modelName,
           model: new OllamaEmbeddings({
             baseUrl: ollamaApiEndpoint,
-            model: model.model,
+            model: modelName, // Use the actual model name from Ollama (may include :latest)
             ...(ollamaApiKey
               ? { headers: { Authorization: `Bearer ${ollamaApiKey}` } }
               : {}),
           }),
         };
+        console.log(`[Ollama] ✅ Loaded embedding model: ${key} (Ollama name: ${modelName})`);
+      } else {
+        // Debug: log models that don't match
+        if (modelName && (modelName.includes('embed') || modelName.includes('bge') || modelName.includes('mxbai'))) {
+          console.log(`[Ollama] ⚠️  Found embedding-like model but not in allowed list: ${modelName}`);
+        }
       }
     });
+    
+    console.log(`[Ollama] Loaded ${Object.keys(embeddingModels).length} embedding models: ${Object.keys(embeddingModels).join(', ')}`);
 
     return embeddingModels;
-  } catch (err) {
-    console.error(`Error loading Ollama embeddings models: ${err}`);
+  } catch (err: any) {
+    if (err.code === 'ETIMEDOUT' || err.message?.includes('timeout')) {
+      console.error(`[Ollama] Connection timeout to ${ollamaApiEndpoint}. Check if the remote server is accessible.`);
+    } else if (err.code === 'ECONNREFUSED') {
+      console.error(`[Ollama] Connection refused to ${ollamaApiEndpoint}. Check if Ollama is running on the remote server.`);
+    } else {
+      console.error(`[Ollama] Error loading embedding models from ${ollamaApiEndpoint}:`, err.message || err);
+    }
     return {};
   }
 };
