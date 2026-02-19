@@ -18,6 +18,11 @@ export interface CreateConversationDTO {
   agentId?: string; // Optional: agent to use for this conversation
   title: string;
   createdBy: string;
+  tags?: string[]; // Optional: initial tags (Req 3.1)
+}
+
+export interface UpdateConversationDTO {
+  tags?: string[]; // Req 3.2: persist tags
 }
 
 export interface AddMessageDTO {
@@ -32,6 +37,9 @@ export interface AddMessageDTO {
     tokensUsed?: number;
   };
   createdBy: string;
+  // PTT Spaces V2 — Req 3.5, 6.3
+  agentId?: string;
+  latencyMs?: number;
 }
 
 export interface PinMessageDTO {
@@ -63,6 +71,7 @@ export class ConversationService {
       createdAt: now,
       updatedAt: now,
       messageCount: 0,
+      tags: data.tags ?? [],
     };
 
     await db.insert(workspaceConversations).values(conversationData);
@@ -130,6 +139,9 @@ export class ConversationService {
       metadata: data.metadata || {},
       createdBy: data.createdBy,
       createdAt: now,
+      // PTT Spaces V2 — Req 3.5, 6.3
+      agentId: data.agentId ?? null,
+      latencyMs: data.latencyMs ?? null,
     };
 
     await db.insert(workspaceMessages).values(messageData);
@@ -221,6 +233,71 @@ export class ConversationService {
         conversationId: data.conversationId || '',
       } : undefined,
     };
+  }
+
+  /**
+   * Update a conversation (e.g. persist tags) — Req 3.2
+   */
+  async updateConversation(
+    conversationId: string,
+    data: UpdateConversationDTO
+  ): Promise<WorkspaceConversation | null> {
+    const now = new Date().toISOString();
+    const updates: Record<string, unknown> = { updatedAt: now };
+    if (data.tags !== undefined) {
+      updates.tags = data.tags;
+    }
+
+    await db
+      .update(workspaceConversations)
+      .set(updates)
+      .where(eq(workspaceConversations.id, conversationId));
+
+    const rows = await db
+      .select()
+      .from(workspaceConversations)
+      .where(eq(workspaceConversations.id, conversationId))
+      .limit(1);
+
+    if (rows.length === 0) return null;
+    const conv = rows[0];
+    return {
+      id: conv.id,
+      workspaceId: conv.workspaceId,
+      agentId: conv.agentId || undefined,
+      title: conv.title,
+      createdBy: conv.createdBy,
+      createdAt: new Date(conv.createdAt),
+      updatedAt: new Date(conv.updatedAt),
+      messageCount: conv.messageCount || 0,
+      tags: (conv.tags as string[]) ?? [],
+      participantAgentIds: (conv.participantAgentIds as string[]) ?? [],
+    } as WorkspaceConversation;
+  }
+
+  /**
+   * Append an agentId to participant_agent_ids if not already present — Req 3.4
+   * Fire-and-forget safe: errors are caught by the caller.
+   */
+  async appendParticipantAgent(
+    conversationId: string,
+    agentId: string
+  ): Promise<void> {
+    const rows = await db
+      .select({ participantAgentIds: workspaceConversations.participantAgentIds })
+      .from(workspaceConversations)
+      .where(eq(workspaceConversations.id, conversationId))
+      .limit(1);
+
+    if (rows.length === 0) return;
+
+    const current: string[] = (rows[0].participantAgentIds as string[]) ?? [];
+    if (current.includes(agentId)) return; // already present, no-op
+
+    await db
+      .update(workspaceConversations)
+      .set({ participantAgentIds: [...current, agentId] })
+      .where(eq(workspaceConversations.id, conversationId));
   }
 
   /**

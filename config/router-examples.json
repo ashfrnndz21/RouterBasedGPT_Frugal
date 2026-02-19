@@ -1,0 +1,14 @@
+[
+  {
+    "text": "What is the capital of France?",
+    "tier": "nano"
+  },
+  {
+    "text": "Explain the implications of quantum entanglement for cryptography",
+    "tier": "full"
+  },
+  {
+    "text": "Summarize the latest news about electric vehicles",
+    "tier": "micro"
+  }
+]

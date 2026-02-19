@@ -10,7 +10,10 @@ import WorkspaceChatWindow from '@/components/Workspace/WorkspaceChatWindow';
 import WorkspaceSettings from '@/components/Workspace/WorkspaceSettings';
 import WorkspaceSidebar from '@/components/Workspace/WorkspaceSidebar';
 import WorkspaceChat from '@/components/Workspace/WorkspaceChat';
+import IntelligenceDashboard from '@/components/Workspace/IntelligenceDashboard';
 import { cn } from '@/lib/utils';
+
+type WorkspaceTab = 'chat' | 'dashboard';
 
 export default function WorkspacePage() {
   const params = useParams();
@@ -23,6 +26,7 @@ export default function WorkspacePage() {
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('chat');
   
   // Track the current chat session ID separately - this is used for the ChatProvider key
   // and should only change when explicitly switching conversations
@@ -160,32 +164,65 @@ export default function WorkspacePage() {
           formatTimestamp={formatTimestamp}
         />
 
-        {/* Main Chat Area */}
+        {/* Main Content Area */}
         <div className={cn(
           'transition-all duration-300',
           showSidebar ? 'lg:ml-80' : 'lg:ml-80'
         )}>
-          <WorkspaceChatWindow 
-            workspace={workspace}
-            conversationId={activeConversationId}
-            onConversationCreated={(conversationId, title, chatId) => {
-              // Add the new conversation to the list
-              // DON'T remount ChatProvider - just update the sidebar list and highlight
-              const newConversation = {
-                id: conversationId,
-                workspaceId: workspace.id,
-                title,
-                createdBy: 'user',
-                createdAt: new Date(),
-                updatedAt: new Date(),
-                messageCount: 1,
-              };
-              setConversations(prev => [newConversation, ...prev]);
-              // Update the active conversation ID for sidebar highlight only
-              // Don't change currentChatId or chatSessionKey - that would remount
-              setActiveConversationId(conversationId);
-            }}
-          />
+          {/* Tab Bar */}
+          <div className="flex items-center gap-1 px-4 pt-3 pb-0 border-b border-light-200 dark:border-dark-200">
+            <button
+              onClick={() => setActiveTab('chat')}
+              className={cn(
+                'px-4 py-2 text-sm font-medium rounded-t-lg transition-colors',
+                activeTab === 'chat'
+                  ? 'text-[#24A0ED] border-b-2 border-[#24A0ED]'
+                  : 'text-black/50 dark:text-white/50 hover:text-black dark:hover:text-white'
+              )}
+            >
+              Chat
+            </button>
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={cn(
+                'px-4 py-2 text-sm font-medium rounded-t-lg transition-colors',
+                activeTab === 'dashboard'
+                  ? 'text-[#24A0ED] border-b-2 border-[#24A0ED]'
+                  : 'text-black/50 dark:text-white/50 hover:text-black dark:hover:text-white'
+              )}
+            >
+              Dashboard
+            </button>
+          </div>
+
+          {/* Tab Content */}
+          {activeTab === 'chat' ? (
+            <WorkspaceChatWindow 
+              workspace={workspace}
+              conversationId={activeConversationId}
+              onConversationCreated={(conversationId, title, chatId) => {
+                // Add the new conversation to the list
+                // DON'T remount ChatProvider - just update the sidebar list and highlight
+                const newConversation = {
+                  id: conversationId,
+                  workspaceId: workspace.id,
+                  title,
+                  createdBy: 'user',
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                  messageCount: 1,
+                };
+                setConversations(prev => [newConversation, ...prev]);
+                // Update the active conversation ID for sidebar highlight only
+                // Don't change currentChatId or chatSessionKey - that would remount
+                setActiveConversationId(conversationId);
+              }}
+            />
+          ) : (
+            <div className="overflow-y-auto max-h-[calc(100vh-8rem)]">
+              <IntelligenceDashboard workspaceId={workspace.id} />
+            </div>
+          )}
         </div>
 
         {/* Workspace Settings Modal */}

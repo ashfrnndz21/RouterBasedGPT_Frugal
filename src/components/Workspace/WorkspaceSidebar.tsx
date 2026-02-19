@@ -1,6 +1,6 @@
 'use client';
 
-import { Workspace, WorkspaceConversation } from '@/lib/types/workspace';
+import { Workspace, WorkspaceConversation, WorkspaceAgent } from '@/lib/types/workspace';
 import {
   ArrowLeft,
   MessageSquarePlus,
@@ -12,13 +12,15 @@ import {
   ChevronDown,
   ChevronRight,
   BarChart3,
+  Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import PinnedInsights from './PinnedInsights';
 import DocumentsList from './DocumentsList';
 import DataSourcesList from './DataSourcesList';
+import PresenceIndicator from './PresenceIndicator';
 
 interface WorkspaceSidebarProps {
   workspace: Workspace | null;
@@ -32,6 +34,7 @@ interface WorkspaceSidebarProps {
   onBack: () => void;
   onSettings: () => void;
   formatTimestamp: (date: Date) => string;
+  onSelectAgent?: (agentId: string) => void;
 }
 
 export default function WorkspaceSidebar({
@@ -46,10 +49,29 @@ export default function WorkspaceSidebar({
   onBack,
   onSettings,
   formatTimestamp,
+  onSelectAgent,
 }: WorkspaceSidebarProps) {
   const router = useRouter();
   const [showPins, setShowPins] = useState(true);
   const [showKnowledge, setShowKnowledge] = useState(false);
+  const [showAgents, setShowAgents] = useState(true);
+  const [agents, setAgents] = useState<WorkspaceAgent[]>([]);
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!workspace) return;
+    fetch(`/api/workspaces/${workspace.id}/agents`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) setAgents(data);
+      })
+      .catch(() => {});
+  }, [workspace?.id]);
+
+  const handleSelectAgent = (agentId: string) => {
+    setActiveAgentId(agentId);
+    onSelectAgent?.(agentId);
+  };
 
   if (!workspace) return null;
 
@@ -106,6 +128,74 @@ export default function WorkspaceSidebar({
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto">
+          {/* Presence Indicator */}
+          <PresenceIndicator workspaceId={workspace.id} />
+
+          {/* Agent Roster */}
+          <div className="border-b border-light-200 dark:border-dark-200">
+            <button
+              onClick={() => setShowAgents(!showAgents)}
+              className="w-full flex items-center justify-between p-3 hover:bg-light-200 dark:hover:bg-dark-200 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-[#24A0ED]" />
+                <span className="text-sm font-medium text-black dark:text-white">
+                  Agents
+                </span>
+                {agents.length > 0 && (
+                  <span className="text-xs bg-light-200 dark:bg-dark-200 text-black/60 dark:text-white/60 rounded-full px-1.5 py-0.5">
+                    {agents.length}
+                  </span>
+                )}
+              </div>
+              {showAgents ? (
+                <ChevronDown className="w-4 h-4 text-black/60 dark:text-white/60" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-black/60 dark:text-white/60" />
+              )}
+            </button>
+            {showAgents && (
+              <div className="px-2 pb-2 max-h-64 overflow-y-auto">
+                {agents.length === 0 ? (
+                  <p className="text-xs text-black/50 dark:text-white/50 px-2 py-2">
+                    No agents configured
+                  </p>
+                ) : (
+                  agents.map((agent) => (
+                    <button
+                      key={agent.id}
+                      onClick={() => handleSelectAgent(agent.id)}
+                      className={cn(
+                        'w-full flex items-start gap-2.5 p-2 rounded-lg mb-1 text-left transition-all hover:bg-light-200 dark:hover:bg-dark-200',
+                        activeAgentId === agent.id &&
+                          'bg-light-200 dark:bg-dark-200 ring-1 ring-[#24A0ED]/40'
+                      )}
+                    >
+                      <span className="text-xl leading-none mt-0.5 shrink-0">
+                        {agent.avatar || '🤖'}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-black dark:text-white truncate">
+                          {agent.name}
+                        </p>
+                        {agent.role && (
+                          <p className="text-xs text-black/60 dark:text-white/60 truncate">
+                            {agent.role}
+                          </p>
+                        )}
+                        {agent.specialty && (
+                          <p className="text-xs text-black/40 dark:text-white/40 truncate">
+                            {agent.specialty}
+                          </p>
+                        )}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Conversations */}
           <div className="p-2">
             <h3 className="text-xs font-semibold text-black/50 dark:text-white/50 uppercase tracking-wide px-2 mb-2">

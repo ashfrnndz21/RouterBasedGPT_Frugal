@@ -91,6 +91,14 @@ export const workspaceAgents = sqliteTable(
     embeddingModel: text('embedding_model'),
     embeddingModelProvider: text('embedding_model_provider'),
     isDefault: integer('is_default', { mode: 'boolean' }).default(false),
+    // PTT Spaces V2 additions (Requirement 8.7)
+    avatar: text('avatar').default('🤖'),
+    role: text('role'),
+    specialty: text('specialty'),
+    toolsAllowed: text('tools_allowed', { mode: 'json' })
+      .$type<string[]>()
+      .default(sql`'[]'`),
+    memoryScope: text('memory_scope', { enum: ['workspace', 'agent', 'user'] }).default('workspace'),
     createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   },
@@ -112,6 +120,11 @@ export const workspaceConversations = sqliteTable(
     createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
     messageCount: integer('message_count').default(0),
+    // PTT Spaces V2 additions (Requirement 3.1)
+    tags: text('tags', { mode: 'json' }).$type<string[]>().default(sql`'[]'`),
+    participantAgentIds: text('participant_agent_ids', { mode: 'json' })
+      .$type<string[]>()
+      .default(sql`'[]'`),
   },
   (table) => ({
     workspaceIdx: index('idx_conversations_workspace').on(table.workspaceId),
@@ -137,6 +150,9 @@ export const workspaceMessages = sqliteTable(
       .default(sql`'{}'`),
     createdBy: text('created_by').notNull(),
     createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+    // PTT Spaces V2 additions (Requirements 3.5, 6.3)
+    agentId: text('agent_id').references(() => workspaceAgents.id, { onDelete: 'set null' }),
+    latencyMs: integer('latency_ms'),
   },
   (table) => ({
     conversationIdx: index('idx_messages_conversation').on(table.conversationId),
@@ -159,6 +175,12 @@ export const workspaceDocuments = sqliteTable(
     uploadedBy: text('uploaded_by').notNull(),
     uploadedAt: text('uploaded_at').notNull().default(sql`CURRENT_TIMESTAMP`),
     fileSize: integer('file_size'),
+    // PTT Spaces V2 additions (Requirements 4.2, 4.4, 4.6)
+    status: text('status', { enum: ['uploading', 'indexing', 'ready', 'failed'] }).default('ready'),
+    errorMessage: text('error_message'),
+    priorityAgents: text('priority_agents', { mode: 'json' })
+      .$type<string[]>()
+      .default(sql`'[]'`),
   },
   (table) => ({
     workspaceIdx: index('idx_documents_workspace').on(table.workspaceId),
@@ -310,5 +332,103 @@ export const sqlCache = sqliteTable(
   },
   (table) => ({
     hashIdx: index('idx_sql_cache_hash').on(table.queryHash),
+  })
+);
+
+// ============================================
+// PTT Spaces V2 — Additive Schema Additions
+// ============================================
+
+// workspace_memory — Workspace_Brain entries
+export const workspaceMemory = sqliteTable(
+  'workspace_memory',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    agentId: text('agent_id').references(() => workspaceAgents.id, { onDelete: 'set null' }),
+    userId: text('user_id'),
+    scope: text('scope', { enum: ['workspace', 'agent', 'user'] }).notNull(),
+    content: text('content').notNull(),
+    embedding: text('embedding'),                    // JSON-serialized number[]
+    sourceConversationId: text('source_conversation_id').references(
+      () => workspaceConversations.id,
+      { onDelete: 'set null' }
+    ),
+    sourceMessageId: text('source_message_id'),
+    pinned: integer('pinned', { mode: 'boolean' }).notNull().default(false),
+    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    workspaceIdx: index('idx_memory_workspace').on(table.workspaceId),
+    scopeIdx: index('idx_memory_scope').on(table.workspaceId, table.scope),
+  })
+);
+
+// workspace_document_chunks — chunked document content with embeddings
+export const workspaceDocumentChunks = sqliteTable(
+  'workspace_document_chunks',
+  {
+    id: text('id').primaryKey(),
+    documentId: text('document_id')
+      .notNull()
+      .references(() => workspaceDocuments.id, { onDelete: 'cascade' }),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    chunkIndex: integer('chunk_index').notNull(),
+    content: text('content').notNull(),
+    embedding: text('embedding'),                    // JSON-serialized number[]
+    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    documentIdx: index('idx_chunks_document').on(table.documentId),
+    workspaceIdx: index('idx_chunks_workspace').on(table.workspaceId),
+  })
+);
+
+// agent_activity_log — per-agent action records
+export const agentActivityLog = sqliteTable(
+  'agent_activity_log',
+  {
+    id: text('id').primaryKey(),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => workspaceAgents.id, { onDelete: 'cascade' }),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    conversationId: text('conversation_id').references(() => workspaceConversations.id, {
+      onDelete: 'set null',
+    }),
+    messageId: text('message_id'),
+    actionType: text('action_type', {
+      enum: ['query_answered', 'document_read', 'data_analyzed', 'handoff_sent', 'handoff_received'],
+    }).notNull(),
+    metadata: text('metadata', { mode: 'json' })
+      .$type<Record<string, unknown>>()
+      .default(sql`'{}'`),
+    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    agentIdx: index('idx_activity_agent').on(table.agentId),
+    workspaceIdx: index('idx_activity_workspace').on(table.workspaceId),
+  })
+);
+
+// workspace_presence — last-active tracking per user per workspace
+export const workspacePresence = sqliteTable(
+  'workspace_presence',
+  {
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    lastActiveAt: text('last_active_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    presenceIdx: index('idx_presence_workspace').on(table.workspaceId),
   })
 );

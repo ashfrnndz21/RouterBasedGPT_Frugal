@@ -25,6 +25,9 @@ export async function POST(
       sources: body.sources,
       metadata: body.metadata,
       createdBy: body.createdBy || 'user',
+      // PTT Spaces V2 — Req 3.5, 6.3
+      agentId: body.agentId,
+      latencyMs: body.latencyMs,
     });
 
     return NextResponse.json(message, { status: 201 });

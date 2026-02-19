@@ -23,6 +23,7 @@ export async function POST(
       agentId: body.agentId, // Optional: agent to use for this conversation
       title: body.title,
       createdBy: body.createdBy,
+      tags: Array.isArray(body.tags) ? body.tags : undefined, // Req 3.1
     });
 
     return NextResponse.json(conversation, { status: 201 });

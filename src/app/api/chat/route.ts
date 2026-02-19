@@ -6,7 +6,7 @@ import {
   getAvailableEmbeddingModelProviders,
 } from '@/lib/providers';
 import db from '@/lib/db';
-import { chats, messages as messagesSchema } from '@/lib/db/schema';
+import { chats, messages as messagesSchema, workspaceAgents } from '@/lib/db/schema';
 import { and, eq, gt } from 'drizzle-orm';
 import { getFileDetails } from '@/lib/utils/files';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
@@ -26,6 +26,17 @@ import { Guardrails } from '@/lib/guardrails';
 import { getBestEmbeddingForGuardrails } from '@/lib/guardrails/utils/getBestEmbedding';
 import { OutputGuardrails } from '@/lib/guardrails/output';
 import { FrugalRouter } from '@/lib/routing/frugalRouter';
+import agentConfigLoader, { AgentNotFoundError, AgentWorkspaceMismatchError } from '@/lib/workspace/agentConfigLoader';
+import type { AgentConfig } from '@/lib/workspace/agentConfigLoader';
+import dataAgentService, { NoDataSourceError } from '@/lib/workspace/dataAgentService';
+import type { InlineResultCard } from '@/lib/workspace/dataAgentService';
+import mentionParser from '@/lib/workspace/mentionParser';
+import handoffHandler from '@/lib/workspace/handoffHandler';
+import brainService from '@/lib/workspace/workspaceBrainService';
+import activityLogger from '@/lib/workspace/agentActivityLogger';
+import { conversationService } from '@/lib/workspace/conversationService';
+import { getSoulLoader } from '@/lib/soul/soulLoader';
+import presenceTracker from '@/lib/workspace/presenceTracker';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -70,6 +81,8 @@ const bodySchema = z.object({
   systemInstructions: z.string().nullable().optional().default(''),
   language: z.string().optional().default('en'),
   maxHistoryTurns: z.number().int().min(1).max(50).optional().default(2),
+  agentId: z.string().optional(),
+  workspaceId: z.string().optional(),
 });
 
 type Message = z.infer<typeof messageSchema>;
@@ -99,6 +112,7 @@ const handleEmitterEvents = async (
   writer: WritableStreamDefaultWriter,
   encoder: TextEncoder,
   chatId: string,
+  onResponseComplete?: (responseText: string) => void,
 ) => {
   let recievedMessage = '';
   const aiMessageId = crypto.randomBytes(7).toString('hex');
@@ -287,6 +301,13 @@ const handleEmitterEvents = async (
       }
     }
 
+    // ── Handoff detection (PTT Spaces V2 — Req 2.6) ──────────────────────────
+    // Notify caller with the final response text so it can detect handoff signals.
+    if (onResponseComplete) {
+      onResponseComplete(recievedMessage);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     // Check if writer is still open before writing
     writer.write(
       encoder.encode(
@@ -473,22 +494,144 @@ export const POST = async (req: Request) => {
       getAvailableEmbeddingModelProviders(),
     ]);
 
+    // ── Agent config loading (PTT Spaces V2 — Req 8.1, 8.2, 8.5, 8.6) ──────
+    // When agentId is provided, load config from DB and use it as the authority
+    // for systemPrompt, chatModel, and embeddingModel.
+    let agentSystemPrompt: string | null = null;
+    let agentChatModelOverride: { provider: string; name: string } | null = null;
+    let agentEmbeddingModelOverride: { provider: string; name: string } | null = null;
+    // resolvedAgentId is preserved for downstream use (activity logging, etc.)
+    let resolvedAgentId: string | undefined = body.agentId;
+    // memoryScope from agent config; defaults to 'workspace' when no agent loaded
+    let resolvedMemoryScope: 'workspace' | 'agent' | 'user' = 'workspace';
+
+    // ── Step 1: Fetch workspace agent roster (needed for mention parsing) ────
+    let workspaceAgentRoster: AgentConfig[] = [];
+    if (body.workspaceId) {
+      try {
+        const agentRows = await db
+          .select()
+          .from(workspaceAgents)
+          .where(eq(workspaceAgents.workspaceId, body.workspaceId));
+        workspaceAgentRoster = agentRows.map((a) => ({
+          id: a.id,
+          workspaceId: a.workspaceId,
+          name: a.name,
+          avatar: a.avatar ?? '🤖',
+          role: a.role ?? '',
+          specialty: a.specialty ?? '',
+          systemPrompt: a.systemPrompt ?? '',
+          chatModel: a.chatModel ?? null,
+          chatModelProvider: a.chatModelProvider ?? null,
+          embeddingModel: a.embeddingModel ?? null,
+          embeddingModelProvider: a.embeddingModelProvider ?? null,
+          toolsAllowed: (a.toolsAllowed as string[]) ?? [],
+          memoryScope: (a.memoryScope as 'workspace' | 'agent' | 'user') ?? 'workspace',
+        }));
+      } catch (err) {
+        console.error('[Chat] Failed to fetch workspace agent roster:', err);
+      }
+    }
+
+    // ── Step 2: Parse @mentions (PTT Spaces V2 — Req 2.5, 2.10) ─────────────
+    // When workspaceId is provided, check the message for @AgentName mentions.
+    // A valid mention overrides the explicit agentId from the request.
+    // An unknown mention returns an error to the user.
+    if (body.workspaceId && workspaceAgentRoster.length > 0) {
+      const mentionResult = mentionParser.parse(message.content, workspaceAgentRoster);
+
+      if (mentionResult.unknownAgentNames.length > 0) {
+        // Req 2.10: unknown @mention → return error, do not invoke LLM
+        return Response.json(
+          {
+            message: `Unknown agent(s) mentioned: ${mentionResult.unknownAgentNames.map((n) => `@${n}`).join(', ')}. ` +
+              `Available agents: ${workspaceAgentRoster.map((a) => `@${a.name}`).join(', ')}`,
+          },
+          { status: 400 },
+        );
+      }
+
+      if (mentionResult.primaryAgentId !== null) {
+        // Req 2.5: mention overrides explicit agentId
+        resolvedAgentId = mentionResult.primaryAgentId;
+        console.log(`[Chat] @mention routing to agent: ${resolvedAgentId}`);
+      }
+    }
+
+    if (resolvedAgentId && body.workspaceId) {
+      try {
+        const agentConfig = await agentConfigLoader.loadAgent(resolvedAgentId, body.workspaceId);
+        agentSystemPrompt = agentConfig.systemPrompt;
+        resolvedMemoryScope = agentConfig.memoryScope;
+        if (agentConfig.chatModel && agentConfig.chatModelProvider) {
+          agentChatModelOverride = {
+            provider: agentConfig.chatModelProvider,
+            name: agentConfig.chatModel,
+          };
+        }
+        if (agentConfig.embeddingModel && agentConfig.embeddingModelProvider) {
+          agentEmbeddingModelOverride = {
+            provider: agentConfig.embeddingModelProvider,
+            name: agentConfig.embeddingModel,
+          };
+        }
+      } catch (err) {
+        if (err instanceof AgentNotFoundError) {
+          return Response.json({ message: err.message }, { status: 404 });
+        }
+        if (err instanceof AgentWorkspaceMismatchError) {
+          return Response.json({ message: err.message }, { status: 403 });
+        }
+        throw err;
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ── DataAgent short-circuit (PTT Spaces V2 — Req 5.2, 5.3) ──────────────
+    // When the resolved agent is DataAgent and a workspaceId is present,
+    // delegate to DataAgentService and return an InlineResultCard directly.
+    // This bypasses the normal LLM/orchestrator flow entirely.
+    if (body.workspaceId && resolvedAgentId) {
+      const resolvedAgent = workspaceAgentRoster.find((a) => a.id === resolvedAgentId);
+      if (resolvedAgent && resolvedAgent.name.toLowerCase() === 'dataagent') {
+        try {
+          const result: InlineResultCard = await dataAgentService.handleQuery(
+            message.content,
+            body.workspaceId,
+            message.chatId,
+            'system',
+          );
+          return Response.json(result);
+        } catch (err) {
+          if (err instanceof NoDataSourceError) {
+            return Response.json({ message: err.message }, { status: 400 });
+          }
+          throw err;
+        }
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Resolve chat model: agent DB override > client-supplied > first available
+    const effectiveChatModelSpec = agentChatModelOverride ?? body.chatModel;
     const chatModelProvider =
       chatModelProviders[
-        body.chatModel?.provider || Object.keys(chatModelProviders)[0]
+        effectiveChatModelSpec?.provider || Object.keys(chatModelProviders)[0]
       ];
     const chatModel =
       chatModelProvider[
-        body.chatModel?.name || Object.keys(chatModelProvider)[0]
+        effectiveChatModelSpec?.name || Object.keys(chatModelProvider)[0]
       ];
 
+    // Resolve embedding model: agent DB override > client-supplied > first available
+    const effectiveEmbeddingModelSpec = agentEmbeddingModelOverride ?? body.embeddingModel;
     const embeddingProvider =
       embeddingModelProviders[
-        body.embeddingModel?.provider || Object.keys(embeddingModelProviders)[0]
+        effectiveEmbeddingModelSpec?.provider || Object.keys(embeddingModelProviders)[0]
       ];
     const embeddingModel =
       embeddingProvider[
-        body.embeddingModel?.name || Object.keys(embeddingProvider)[0]
+        effectiveEmbeddingModelSpec?.name || Object.keys(embeddingProvider)[0]
       ];
 
     let llm: BaseChatModel | undefined;
@@ -609,8 +752,21 @@ export const POST = async (req: Request) => {
       body.systemInstructions as string,
     );
 
-    // Use stateful orchestrator for advanced context management
-    const useStatefulOrchestration = true; // Enabled — uses warmed singletons via bootstrap()
+    // ── Merge agent system prompt with SOUL (Req 8.5) ────────────────────────
+    // When agentId is provided, the agent's DB system prompt is authoritative.
+    // SOUL personality is prepended; agent prompt is appended after SOUL.
+    // When no agentId, fall back to the client-supplied systemInstructions.
+    let effectiveSystemInstructions: string;
+    if (agentSystemPrompt !== null) {
+      const soul = getSoulLoader().getPersonality();
+      // SOUL first, then agent-specific prompt (agent prompt appended after SOUL)
+      effectiveSystemInstructions = soul
+        ? `${soul}\n\n${agentSystemPrompt}`
+        : agentSystemPrompt;
+    } else {
+      effectiveSystemInstructions = systemInstructionsWithLanguage;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     const orchestrator = new StatefulOrchestrator(handler, embedding);
     
@@ -628,13 +784,99 @@ export const POST = async (req: Request) => {
       embedding,
       body.optimizationMode,
       body.files,
-      systemInstructionsWithLanguage,
+      effectiveSystemInstructions,
       maxHistoryTurns
     );
 
     // Attach event listeners immediately
-    handleEmitterEvents(stream, writer, encoder, message.chatId);
+    handleEmitterEvents(stream, writer, encoder, message.chatId, (responseText) => {
+      // ── Handoff detection (PTT Spaces V2 — Req 2.6) ────────────────────────
+      // Detect [HANDOFF: AgentName | reason] markers in the response.
+      // Full re-invocation is a future enhancement; for now we detect and log.
+      if (body.workspaceId) {
+        const handoffSignal = handoffHandler.detectHandoff(responseText);
+        if (handoffSignal) {
+          console.log(
+            `[Chat] Handoff signal detected → target: "${handoffSignal.targetAgentName}", ` +
+              `reason: "${handoffSignal.reason}", workspaceId: ${body.workspaceId}, ` +
+              `conversationId: ${message.chatId}`,
+          );
+          // TODO: Full handoff re-invocation (future enhancement)
+
+          // ── Activity log: handoff_sent (Req 2.7) ─────────────────────────
+          if (resolvedAgentId) {
+            activityLogger.record({
+              agentId: resolvedAgentId,
+              workspaceId: body.workspaceId,
+              conversationId: message.chatId,
+              messageId: '',
+              actionType: 'handoff_sent',
+              metadata: {
+                targetAgentName: handoffSignal.targetAgentName,
+                reason: handoffSignal.reason,
+              },
+            }).catch((err) => {
+              console.error('[Chat] AgentActivityLogger.record(handoff_sent) failed:', err);
+            });
+          }
+        }
+      }
+
+      // ── Workspace Brain indexing (PTT Spaces V2 — Req 1.2, 1.7) ───────────
+      // Fire-and-forget: index the assistant response as a memory fact.
+      // Errors are logged but never propagate to the response stream.
+      if (body.workspaceId) {
+        brainService.indexFact({
+          workspaceId: body.workspaceId,
+          agentId: resolvedAgentId ?? null,
+          userId: 'system',
+          scope: resolvedMemoryScope,
+          content: responseText,
+          embedding: null,
+          sourceConversationId: message.chatId,
+          sourceMessageId: null,
+          pinned: false,
+        }).catch((err) => {
+          console.error('[Chat] WorkspaceBrainService.indexFact failed:', err);
+        });
+      }
+
+      // ── Activity log: query_answered (PTT Spaces V2 — Req 2.7) ──────────
+      // Fire-and-forget: record the completed turn in the activity log.
+      // Errors are logged but never propagate to the response stream.
+      if (resolvedAgentId && body.workspaceId) {
+        activityLogger.record({
+          agentId: resolvedAgentId,
+          workspaceId: body.workspaceId,
+          conversationId: message.chatId,
+          messageId: '',
+          actionType: 'query_answered',
+          metadata: {},
+        }).catch((err) => {
+          console.error('[Chat] AgentActivityLogger.record(query_answered) failed:', err);
+        });
+      }
+
+      // ── Participant agent tracking (PTT Spaces V2 — Req 3.4) ─────────────
+      // Fire-and-forget: append resolvedAgentId to participant_agent_ids on
+      // the workspace conversation if not already present.
+      if (resolvedAgentId && body.workspaceId) {
+        conversationService.appendParticipantAgent(message.chatId, resolvedAgentId).catch((err) => {
+          console.error('[Chat] conversationService.appendParticipantAgent failed:', err);
+        });
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+    });
     handleHistorySave(message, humanMessageId, body.focusMode, body.files);
+
+    // ── Presence tracking (PTT Spaces V2 — Req 7.2) ──────────────────────────
+    // Fire-and-forget: update the workspace presence timestamp on every chat action.
+    if (body.workspaceId) {
+      presenceTracker.touch(body.workspaceId, 'system').catch((err) => {
+        console.error('[Chat] PresenceTracker.touch failed:', err);
+      });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     return new Response(responseStream.readable, {
       headers: {

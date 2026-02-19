@@ -62,6 +62,11 @@ export async function PUT(
       chatModelProvider: body.chatModelProvider,
       embeddingModel: body.embeddingModel,
       embeddingModelProvider: body.embeddingModelProvider,
+      avatar: body.avatar,
+      role: body.role,
+      specialty: body.specialty,
+      toolsAllowed: body.toolsAllowed,
+      memoryScope: body.memoryScope,
     });
 
     if (!agent) {

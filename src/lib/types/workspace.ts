@@ -31,6 +31,11 @@ export interface WorkspaceAgent {
   embeddingModel?: string;
   embeddingModelProvider?: string;
   isDefault: boolean;
+  avatar?: string;
+  role?: string;
+  specialty?: string;
+  toolsAllowed?: string[];
+  memoryScope?: 'workspace' | 'agent' | 'user';
   createdAt: string;
   updatedAt: string;
 }
@@ -44,6 +49,8 @@ export interface WorkspaceConversation {
   createdAt: Date;
   updatedAt: Date;
   messageCount: number;
+  tags?: string[];              // Req 3.1
+  participantAgentIds?: string[]; // Req 3.4
 }
 
 export interface WorkspaceMessage {

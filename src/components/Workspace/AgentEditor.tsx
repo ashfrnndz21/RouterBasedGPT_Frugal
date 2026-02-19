@@ -28,6 +28,11 @@ export default function AgentEditor({
   const [embeddingModel, setEmbeddingModel] = useState('');
   const [embeddingModelProvider, setEmbeddingModelProvider] = useState('');
   const [isDefault, setIsDefault] = useState(false);
+  const [avatar, setAvatar] = useState('🤖');
+  const [role, setRole] = useState('');
+  const [specialty, setSpecialty] = useState('');
+  const [toolsAllowed, setToolsAllowed] = useState('');
+  const [memoryScope, setMemoryScope] = useState<'workspace' | 'agent' | 'user'>('workspace');
   const [isSaving, setIsSaving] = useState(false);
 
   const [availableModels, setAvailableModels] = useState<any>(null);
@@ -44,6 +49,11 @@ export default function AgentEditor({
       setEmbeddingModel(agent.embeddingModel || '');
       setEmbeddingModelProvider(agent.embeddingModelProvider || '');
       setIsDefault(agent.isDefault);
+      setAvatar(agent.avatar || '🤖');
+      setRole(agent.role || '');
+      setSpecialty(agent.specialty || '');
+      setToolsAllowed(agent.toolsAllowed?.join(', ') || '');
+      setMemoryScope(agent.memoryScope || 'workspace');
     } else {
       // Reset form for new agent
       setName('');
@@ -54,6 +64,11 @@ export default function AgentEditor({
       setEmbeddingModel('');
       setEmbeddingModelProvider('');
       setIsDefault(false);
+      setAvatar('🤖');
+      setRole('');
+      setSpecialty('');
+      setToolsAllowed('');
+      setMemoryScope('workspace');
     }
   }, [agent]);
 
@@ -120,6 +135,13 @@ export default function AgentEditor({
           embeddingModel: embeddingModel || undefined,
           embeddingModelProvider: embeddingModelProvider || undefined,
           isDefault,
+          avatar: avatar || '🤖',
+          role: role.trim() || undefined,
+          specialty: specialty.trim() || undefined,
+          toolsAllowed: toolsAllowed.trim()
+            ? toolsAllowed.split(',').map((t) => t.trim()).filter(Boolean)
+            : [],
+          memoryScope,
         }),
       });
 
@@ -192,6 +214,51 @@ export default function AgentEditor({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="e.g., Specialized in academic research and citations"
+              className="w-full px-3 py-2 bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-lg text-sm text-black dark:text-white placeholder:text-black/50 dark:placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-[#24A0ED]/50"
+            />
+          </div>
+
+          {/* Avatar */}
+          <div>
+            <label className="block text-sm font-medium text-black dark:text-white mb-1">
+              Avatar
+            </label>
+            <input
+              type="text"
+              value={avatar}
+              onChange={(e) => setAvatar(e.target.value)}
+              placeholder="🤖"
+              className="w-full px-3 py-2 bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-lg text-sm text-black dark:text-white placeholder:text-black/50 dark:placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-[#24A0ED]/50"
+            />
+            <p className="text-xs text-black/50 dark:text-white/50 mt-1">
+              Enter an emoji to represent this agent
+            </p>
+          </div>
+
+          {/* Role */}
+          <div>
+            <label className="block text-sm font-medium text-black dark:text-white mb-1">
+              Role
+            </label>
+            <input
+              type="text"
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              placeholder="e.g., Data Analyst"
+              className="w-full px-3 py-2 bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-lg text-sm text-black dark:text-white placeholder:text-black/50 dark:placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-[#24A0ED]/50"
+            />
+          </div>
+
+          {/* Specialty */}
+          <div>
+            <label className="block text-sm font-medium text-black dark:text-white mb-1">
+              Specialty
+            </label>
+            <input
+              type="text"
+              value={specialty}
+              onChange={(e) => setSpecialty(e.target.value)}
+              placeholder="e.g., SQL and data analysis"
               className="w-full px-3 py-2 bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-lg text-sm text-black dark:text-white placeholder:text-black/50 dark:placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-[#24A0ED]/50"
             />
           </div>
@@ -316,6 +383,39 @@ export default function AgentEditor({
             <p className="text-xs text-black/50 dark:text-white/50 mt-1">
               Leave empty to use workspace defaults
             </p>
+          </div>
+
+          {/* Tools Allowed */}
+          <div>
+            <label className="block text-sm font-medium text-black dark:text-white mb-1">
+              Tools Allowed
+            </label>
+            <input
+              type="text"
+              value={toolsAllowed}
+              onChange={(e) => setToolsAllowed(e.target.value)}
+              placeholder="e.g., web_search, code_interpreter"
+              className="w-full px-3 py-2 bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-lg text-sm text-black dark:text-white placeholder:text-black/50 dark:placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-[#24A0ED]/50"
+            />
+            <p className="text-xs text-black/50 dark:text-white/50 mt-1">
+              Comma-separated list of allowed tools (optional)
+            </p>
+          </div>
+
+          {/* Memory Scope */}
+          <div>
+            <label className="block text-sm font-medium text-black dark:text-white mb-1">
+              Memory Scope
+            </label>
+            <select
+              value={memoryScope}
+              onChange={(e) => setMemoryScope(e.target.value as 'workspace' | 'agent' | 'user')}
+              className="w-full px-3 py-2 bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-lg text-sm text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#24A0ED]/50"
+            >
+              <option value="workspace">Workspace — shared with all members</option>
+              <option value="agent">Agent — private to this agent</option>
+              <option value="user">User — private to each user</option>
+            </select>
           </div>
 
           {/* Set as Default */}

@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import db from '@/lib/db';
-import { workspaces } from '@/lib/db/schema';
+import { workspaces, workspaceAgents } from '@/lib/db/schema';
 import { Workspace, WorkspaceSettings } from '@/lib/types/workspace';
 import { randomUUID } from 'crypto';
 import agentService from './agentService';
@@ -62,6 +62,25 @@ export class WorkspaceService {
     } catch (error) {
       console.error('Failed to create default agent:', error);
       // Don't fail workspace creation if agent creation fails
+    }
+
+    // Seed DataAgent for every new workspace (Requirement 5.1)
+    try {
+      const now = new Date().toISOString();
+      await db.insert(workspaceAgents).values({
+        id: randomUUID(),
+        workspaceId: id,
+        name: 'DataAgent',
+        avatar: '📊',
+        role: 'Data Analyst',
+        specialty: 'SQL and data analysis',
+        isDefault: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } catch (error) {
+      console.error('Failed to seed DataAgent:', error);
+      // Don't fail workspace creation if DataAgent seeding fails
     }
 
     return {

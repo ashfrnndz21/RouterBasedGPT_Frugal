@@ -9,7 +9,9 @@
     "start": "next start",
     "lint": "next lint",
     "format:write": "prettier . --write",
-    "db:migrate": "node ./src/lib/db/migrate.ts"
+    "db:migrate": "node ./src/lib/db/migrate.ts",
+    "test": "vitest --run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.0",
@@ -66,13 +68,16 @@
     "@types/pdf-parse": "^1.1.4",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@vitest/coverage-v8": "^4.0.18",
     "autoprefixer": "^10.0.1",
     "drizzle-kit": "^0.30.5",
     "eslint": "^8",
     "eslint-config-next": "14.1.4",
+    "fast-check": "^4.5.3",
     "postcss": "^8",
     "prettier": "^3.2.5",
     "tailwindcss": "^3.3.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.0.18"
   }
 }

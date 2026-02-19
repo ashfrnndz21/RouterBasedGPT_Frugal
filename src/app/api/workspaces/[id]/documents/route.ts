@@ -1,46 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { documentService } from '@/lib/workspace/documentService';
-import { getAvailableEmbeddingModelProviders } from '@/lib/providers';
-import { writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
-import path from 'path';
-import { randomUUID } from 'crypto';
-
-const UPLOADS_DIR = path.join(process.cwd(), 'uploads', 'documents');
-
-// Ensure uploads directory exists
-async function ensureUploadsDir(workspaceId: string): Promise<string> {
-  const workspaceDir = path.join(UPLOADS_DIR, workspaceId);
-  if (!existsSync(workspaceDir)) {
-    await mkdir(workspaceDir, { recursive: true });
-  }
-  return workspaceDir;
-}
-
-// Get the first available embedding model
-async function getEmbeddingModel() {
-  const providers = await getAvailableEmbeddingModelProviders();
-  
-  // Prefer ollama, then openai, then any available
-  const preferredProviders = ['ollama', 'openai', 'gemini', 'transformers'];
-  
-  for (const provider of preferredProviders) {
-    if (providers[provider] && Object.keys(providers[provider]).length > 0) {
-      const modelKey = Object.keys(providers[provider])[0];
-      return providers[provider][modelKey].model;
-    }
-  }
-  
-  // Fallback to any available
-  for (const provider in providers) {
-    if (Object.keys(providers[provider]).length > 0) {
-      const modelKey = Object.keys(providers[provider])[0];
-      return providers[provider][modelKey].model;
-    }
-  }
-  
-  return null;
-}
+import { DocumentPipeline } from '@/lib/workspace/documentPipeline';
+import presenceTracker from '@/lib/workspace/presenceTracker';
 
 export async function GET(
   request: NextRequest,
@@ -59,6 +20,9 @@ export async function GET(
   }
 }
 
+const SUPPORTED_TYPES = ['pdf', 'txt', 'docx', 'csv'] as const;
+type SupportedFileType = typeof SUPPORTED_TYPES[number];
+
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
@@ -66,26 +30,26 @@ export async function POST(
   try {
     const params = await context.params;
     const workspaceId = params.id;
-    
+
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
-    const conversationId = formData.get('conversationId') as string | null;
-    
+    const uploadedBy = (formData.get('uploadedBy') as string | null) ?? 'user';
+
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     }
-    
-    // Validate file type
+
+    // Validate file type (Req 4.5: pdf, txt, docx, csv)
     const filename = file.name;
     const extension = filename.split('.').pop()?.toLowerCase();
-    
-    if (!extension || !['pdf', 'txt'].includes(extension)) {
+
+    if (!extension || !(SUPPORTED_TYPES as readonly string[]).includes(extension)) {
       return NextResponse.json(
-        { error: 'Unsupported file type. Please upload PDF or TXT files.' },
+        { error: 'Unsupported file type. Please upload PDF, TXT, DOCX, or CSV files.' },
         { status: 400 }
       );
     }
-    
+
     // Validate file size (max 10MB)
     const MAX_SIZE = 10 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
@@ -94,45 +58,30 @@ export async function POST(
         { status: 400 }
       );
     }
-    
-    // Get embedding model
-    const embeddingModel = await getEmbeddingModel();
-    if (!embeddingModel) {
-      return NextResponse.json(
-        { error: 'No embedding model available. Please configure an embedding provider.' },
-        { status: 500 }
-      );
-    }
-    
-    // Save file to disk
-    const uploadsDir = await ensureUploadsDir(workspaceId);
-    const fileId = randomUUID();
-    const filePath = path.join(uploadsDir, `${fileId}.${extension}`);
-    
+
     const buffer = Buffer.from(await file.arrayBuffer());
-    await writeFile(filePath, buffer);
-    
-    // Process and store document
-    const document = await documentService.uploadDocument(
-      {
-        workspaceId,
-        conversationId: conversationId || undefined,
-        filename,
-        fileType: extension as 'pdf' | 'txt',
-        filePath,
-        uploadedBy: 'user',
-      },
-      embeddingModel
+
+    // ── Presence tracking (PTT Spaces V2 — Req 7.2) ──────────────────────────
+    // Fire-and-forget: update the workspace presence timestamp on every upload action.
+    presenceTracker.touch(workspaceId, uploadedBy ?? 'system').catch((err) => {
+      console.error('[Documents] PresenceTracker.touch failed:', err);
+    });
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Ingest via DocumentPipeline (Req 4.2: status transitions uploading→indexing→ready/failed)
+    const pipeline = new DocumentPipeline();
+    const documentId = await pipeline.ingest(
+      workspaceId,
+      buffer,
+      filename,
+      extension as SupportedFileType,
+      uploadedBy
     );
-    
-    return NextResponse.json({
-      id: document.id,
-      filename: document.filename,
-      fileType: document.fileType,
-      fileSize: document.fileSize,
-      uploadedAt: document.uploadedAt,
-    }, { status: 201 });
-    
+
+    const status = await pipeline.getStatus(documentId);
+
+    return NextResponse.json({ documentId, status }, { status: 201 });
+
   } catch (error: any) {
     console.error('Error uploading document:', error);
     return NextResponse.json(

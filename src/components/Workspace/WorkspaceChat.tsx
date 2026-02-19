@@ -24,7 +24,8 @@ export default function WorkspaceChat({ workspace, conversationId }: WorkspaceCh
         // Get the conversation to find its agent
         const convResponse = await fetch(`/api/workspaces/${workspace.id}/conversations`);
         if (convResponse.ok) {
-          const conversations = await convResponse.json();
+          const data = await convResponse.json();
+          const conversations: any[] = data.conversations ?? [];
           const conversation = conversations.find((c: any) => c.id === conversationId);
           
           if (conversation?.agentId) {

@@ -337,7 +337,7 @@ const loadMessages = async (
 
   const data = await res.json();
 
-  const messages = data.messages as Message[];
+  const messages = (data.messages ?? []) as Message[];
 
   setMessages(messages);
 
@@ -355,7 +355,7 @@ const loadMessages = async (
     document.title = chatTurns[0].content;
   }
 
-  const files = data.chat.files.map((file: any) => {
+  const files = (data.chat?.files ?? []).map((file: any) => {
     return {
       fileName: file.name,
       fileExtension: file.name.split('.').pop(),
@@ -367,7 +367,7 @@ const loadMessages = async (
   setFileIds(files.map((file: File) => file.fileId));
 
   setChatHistory(history);
-  setFocusMode(data.chat.focusMode);
+  if (data.chat?.focusMode) setFocusMode(data.chat.focusMode);
   setIsMessagesLoaded(true);
 };
 
@@ -809,6 +809,24 @@ export const ChatProvider = ({
 
       // Use the messageId from data, or fall back to the one we generated
       const responseMessageId = data.messageId || messageId;
+
+      if (data.type === 'inline_result_card') {
+        // DataAgent inline result — store as assistant message with JSON content
+        setMessages((prevMessages) => [
+          ...prevMessages,
+          {
+            content: JSON.stringify(data),
+            messageId: responseMessageId,
+            chatId: chatId!,
+            role: 'assistant',
+            createdAt: new Date(),
+          },
+        ]);
+        added = true;
+        setMessageAppeared(true);
+        setLoading(false);
+        return;
+      }
 
       if (data.type === 'sources') {
         console.log('[useChat] Received sources:', data.data.length, 'sources');

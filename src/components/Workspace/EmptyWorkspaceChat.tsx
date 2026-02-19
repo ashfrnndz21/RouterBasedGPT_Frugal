@@ -1,7 +1,7 @@
 'use client';
 
 import { Workspace, WorkspaceAgent } from '@/lib/types/workspace';
-import { FileText, Users, Sparkles, ArrowRight, ChevronDown } from 'lucide-react';
+import { FileText, Users, Sparkles, ArrowRight } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import Focus from '@/components/MessageInputActions/Focus';
@@ -24,7 +24,6 @@ export default function EmptyWorkspaceChat({ workspace, conversationId, onConver
   const [agents, setAgents] = useState<WorkspaceAgent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<WorkspaceAgent | null>(null);
   const [isLoadingAgents, setIsLoadingAgents] = useState(true);
-  const [showAgentDropdown, setShowAgentDropdown] = useState(false);
 
   const suggestions = [
     `What should I know about ${workspace.name}?`,
@@ -182,70 +181,7 @@ This workspace has access to uploaded documents and connected databases. When th
         </div>
       )}
 
-      {/* Agent Selection */}
-      {!isLoadingAgents && agents.length > 0 && (
-        <div className="w-full">
-          <label className="block text-xs font-medium text-black/60 dark:text-white/60 mb-2">
-            Select Agent
-          </label>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowAgentDropdown(!showAgentDropdown)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-xl text-sm text-black dark:text-white hover:border-[#24A0ED]/50 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#24A0ED]" />
-                <span>{selectedAgent?.name || 'Select an agent'}</span>
-                {selectedAgent?.isDefault && (
-                  <span className="text-xs text-[#24A0ED]">(Default)</span>
-                )}
-              </div>
-              <ChevronDown className="w-4 h-4 text-black/50 dark:text-white/50" />
-            </button>
-            
-            {showAgentDropdown && (
-              <div className="absolute top-full left-0 right-0 mt-2 bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-xl shadow-lg z-10 max-h-64 overflow-y-auto">
-                {agents.map((agent) => (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedAgent(agent);
-                      setShowAgentDropdown(false);
-                      // Update system instructions when agent changes
-                      updateSystemInstructions(agent);
-                    }}
-                    className="w-full flex items-start gap-2 px-4 py-3 text-left hover:bg-light-200 dark:hover:bg-dark-200 transition-colors border-b border-light-200 dark:border-dark-200 last:border-b-0"
-                  >
-                    <Sparkles className="w-4 h-4 text-[#24A0ED] flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-black dark:text-white">
-                          {agent.name}
-                        </span>
-                        {agent.isDefault && (
-                          <span className="text-xs text-[#24A0ED]">(Default)</span>
-                        )}
-                      </div>
-                      {agent.description && (
-                        <p className="text-xs text-black/60 dark:text-white/60 mt-0.5 line-clamp-1">
-                          {agent.description}
-                        </p>
-                      )}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          {selectedAgent?.description && (
-            <p className="text-xs text-black/50 dark:text-white/50 mt-2">
-              {selectedAgent.description}
-            </p>
-          )}
-        </div>
-      )}
+
 
       {/* Message Input */}
       <form onSubmit={handleSubmit} className="w-full">
@@ -282,6 +218,51 @@ This workspace has access to uploaded documents and connected databases. When th
           </div>
         </div>
       </form>
+
+      {/* Agent Roster — quick-start @mention suggestions (Req 2.1, 2.5) */}
+      {!isLoadingAgents && agents.length > 0 && (
+        <div className="w-full space-y-2">
+          <p className="text-xs font-medium text-black/50 dark:text-white/50 uppercase tracking-wide">
+            Available agents — click to @mention
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {agents.map((agent) => (
+              <button
+                key={agent.id}
+                type="button"
+                onClick={() => {
+                  const mention = `@${agent.name} `;
+                  setMessage((prev) => (prev.startsWith('@') ? mention : mention + prev));
+                  inputRef.current?.focus();
+                }}
+                className="flex items-start gap-3 p-3 bg-light-secondary dark:bg-dark-secondary hover:bg-light-200 dark:hover:bg-dark-200 rounded-xl text-left transition-colors border border-light-200 dark:border-dark-200"
+              >
+                <span className="text-2xl leading-none mt-0.5 flex-shrink-0">
+                  {(agent as any).avatar || '🤖'}
+                </span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-sm font-semibold text-black dark:text-white">
+                      {agent.name}
+                    </span>
+                    <span className="text-xs text-[#24A0ED] font-mono">@{agent.name}</span>
+                  </div>
+                  {((agent as any).role || agent.description) && (
+                    <p className="text-xs text-black/50 dark:text-white/50 mt-0.5 line-clamp-1">
+                      {(agent as any).role || agent.description}
+                    </p>
+                  )}
+                  {(agent as any).specialty && (
+                    <p className="text-xs text-black/40 dark:text-white/40 line-clamp-1">
+                      {(agent as any).specialty}
+                    </p>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Suggestions */}
       <div className="w-full space-y-3">

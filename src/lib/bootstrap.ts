@@ -87,7 +87,9 @@ export async function runMigrations(): Promise<void> {
     .sort();
 
   for (const file of files) {
-    const migrationName = file.split('_')[0] || file;
+    // Use the full filename as the migration key to avoid collisions
+    // (e.g. 0002_add_sessions_semantic_cache.sql vs 0002_workspace_tables.sql)
+    const migrationName = file;
 
     const already = db
       .prepare('SELECT 1 FROM ran_migrations WHERE name = ?')

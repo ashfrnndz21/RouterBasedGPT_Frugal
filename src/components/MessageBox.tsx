@@ -25,6 +25,20 @@ import Citation from './Citation';
 import { preferenceManager } from '@/lib/preferences/preferenceManager';
 import ResponseBadges from './ResponseBadges';
 import CitationReferences from './CitationReferences';
+import InlineResultCard from './Workspace/InlineResultCard';
+import type { InlineResultCard as InlineResultCardData } from '@/lib/workspace/dataAgentService';
+
+function tryParseInlineResultCard(content: string): InlineResultCardData | null {
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed && parsed.type === 'inline_result_card') {
+      return parsed as InlineResultCardData;
+    }
+  } catch {
+    // not JSON — fall through
+  }
+  return null;
+}
 
 const ThinkTagProcessor = ({
   children,
@@ -89,6 +103,18 @@ const MessageBox = ({
       answer: {
         component: ({ children, ...props }: any) => {
           return <div className="text-black/80 dark:text-white/80">{children}</div>;
+        },
+      },
+      // Handle <source_url> tag from AI responses - render as a plain link or suppress
+      source_url: {
+        component: ({ children, href, ...props }: any) => {
+          const url = href || (typeof children === 'string' ? children : null);
+          if (!url) return null;
+          return (
+            <a href={url} target="_blank" rel="noopener noreferrer" className="text-[#24A0ED] hover:underline text-sm">
+              {url}
+            </a>
+          );
         },
       },
     },
@@ -165,17 +191,23 @@ const MessageBox = ({
                       </div>
                     </div>
                   </div>
-                ) : (
-                  <Markdown
-                    className={cn(
-                      'prose prose-h1:mb-3 prose-h2:mb-2 prose-h2:mt-6 prose-h2:font-[800] prose-h3:mt-4 prose-h3:mb-1.5 prose-h3:font-[600] dark:prose-invert prose-p:leading-relaxed prose-pre:p-0 font-[400]',
-                      'max-w-none break-words text-black dark:text-white',
-                    )}
-                    options={markdownOverrides}
-                  >
-                    {parsedMessage}
-                  </Markdown>
-                )}
+                ) : (() => {
+                  const inlineCard = tryParseInlineResultCard(parsedMessage);
+                  if (inlineCard) {
+                    return <InlineResultCard data={inlineCard} />;
+                  }
+                  return (
+                    <Markdown
+                      className={cn(
+                        'prose prose-h1:mb-3 prose-h2:mb-2 prose-h2:mt-6 prose-h2:font-[800] prose-h3:mt-4 prose-h3:mb-1.5 prose-h3:font-[600] dark:prose-invert prose-p:leading-relaxed prose-pre:p-0 font-[400]',
+                        'max-w-none break-words text-black dark:text-white',
+                      )}
+                      options={markdownOverrides}
+                    >
+                      {parsedMessage}
+                    </Markdown>
+                  );
+                })()}
 
                 {/* Response Badges */}
                 <ResponseBadges metadata={section.metadata} />

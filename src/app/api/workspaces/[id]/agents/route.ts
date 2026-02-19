@@ -59,6 +59,11 @@ export async function POST(
       embeddingModel: body.embeddingModel,
       embeddingModelProvider: body.embeddingModelProvider,
       isDefault: body.isDefault,
+      avatar: body.avatar,
+      role: body.role,
+      specialty: body.specialty,
+      toolsAllowed: body.toolsAllowed,
+      memoryScope: body.memoryScope,
     });
 
     return NextResponse.json(agent, { status: 201 });

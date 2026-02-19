@@ -14,6 +14,11 @@ export interface CreateAgentDTO {
   embeddingModel?: string;
   embeddingModelProvider?: string;
   isDefault?: boolean;
+  avatar?: string;
+  role?: string;
+  specialty?: string;
+  toolsAllowed?: string[];
+  memoryScope?: 'workspace' | 'agent' | 'user';
 }
 
 export interface UpdateAgentDTO {
@@ -24,6 +29,11 @@ export interface UpdateAgentDTO {
   chatModelProvider?: string;
   embeddingModel?: string;
   embeddingModelProvider?: string;
+  avatar?: string;
+  role?: string;
+  specialty?: string;
+  toolsAllowed?: string[];
+  memoryScope?: 'workspace' | 'agent' | 'user';
 }
 
 export class AgentService {
@@ -66,6 +76,11 @@ export class AgentService {
       embeddingModel: dto.embeddingModel || null,
       embeddingModelProvider: dto.embeddingModelProvider || null,
       isDefault: dto.isDefault || false,
+      avatar: dto.avatar || '🤖',
+      role: dto.role?.trim() || null,
+      specialty: dto.specialty?.trim() || null,
+      toolsAllowed: dto.toolsAllowed || [],
+      memoryScope: dto.memoryScope || 'workspace',
       createdAt: now,
       updatedAt: now,
     };
@@ -81,6 +96,10 @@ export class AgentService {
       chatModelProvider: agent.chatModelProvider || undefined,
       embeddingModel: agent.embeddingModel || undefined,
       embeddingModelProvider: agent.embeddingModelProvider || undefined,
+      role: agent.role || undefined,
+      specialty: agent.specialty || undefined,
+      toolsAllowed: agent.toolsAllowed as string[],
+      memoryScope: agent.memoryScope as 'workspace' | 'agent' | 'user',
     };
   }
 
@@ -122,6 +141,11 @@ export class AgentService {
       updateData.embeddingModel = dto.embeddingModel || null;
     if (dto.embeddingModelProvider !== undefined)
       updateData.embeddingModelProvider = dto.embeddingModelProvider || null;
+    if (dto.avatar !== undefined) updateData.avatar = dto.avatar || '🤖';
+    if (dto.role !== undefined) updateData.role = dto.role.trim() || null;
+    if (dto.specialty !== undefined) updateData.specialty = dto.specialty.trim() || null;
+    if (dto.toolsAllowed !== undefined) updateData.toolsAllowed = dto.toolsAllowed;
+    if (dto.memoryScope !== undefined) updateData.memoryScope = dto.memoryScope;
 
     await db.update(workspaceAgents).set(updateData).where(eq(workspaceAgents.id, agentId));
 
@@ -175,6 +199,11 @@ export class AgentService {
       chatModelProvider: agent.chatModelProvider || undefined,
       embeddingModel: agent.embeddingModel || undefined,
       embeddingModelProvider: agent.embeddingModelProvider || undefined,
+      avatar: agent.avatar || '🤖',
+      role: agent.role || undefined,
+      specialty: agent.specialty || undefined,
+      toolsAllowed: (agent.toolsAllowed as string[]) || [],
+      memoryScope: (agent.memoryScope as 'workspace' | 'agent' | 'user') || 'workspace',
     }));
   }
 
@@ -202,6 +231,11 @@ export class AgentService {
       chatModelProvider: agent.chatModelProvider || undefined,
       embeddingModel: agent.embeddingModel || undefined,
       embeddingModelProvider: agent.embeddingModelProvider || undefined,
+      avatar: agent.avatar || '🤖',
+      role: agent.role || undefined,
+      specialty: agent.specialty || undefined,
+      toolsAllowed: (agent.toolsAllowed as string[]) || [],
+      memoryScope: (agent.memoryScope as 'workspace' | 'agent' | 'user') || 'workspace',
     };
   }
 
@@ -248,6 +282,11 @@ export class AgentService {
       chatModelProvider: agent.chatModelProvider || undefined,
       embeddingModel: agent.embeddingModel || undefined,
       embeddingModelProvider: agent.embeddingModelProvider || undefined,
+      avatar: agent.avatar || '🤖',
+      role: agent.role || undefined,
+      specialty: agent.specialty || undefined,
+      toolsAllowed: (agent.toolsAllowed as string[]) || [],
+      memoryScope: (agent.memoryScope as 'workspace' | 'agent' | 'user') || 'workspace',
     };
   }
 
