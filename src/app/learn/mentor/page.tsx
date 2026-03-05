@@ -1,8 +1,14 @@
 'use client'
-// src/app/learn/mentor/page.tsx — Real profile injection, session-based
+// src/app/learn/mentor/page.tsx — Polished Sage mentor with typing indicator + message animations
 import { useState, useEffect, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import { motion, AnimatePresence } from 'framer-motion'
+import { StaggerList } from '@/components/Learn/motion/StaggerList'
+import { ScalePress } from '@/components/Learn/motion/ScalePress'
+import { TypingIndicator } from '@/components/Learn/motion/TypingIndicator'
+import { CharacterReveal } from '@/components/Learn/motion/CharacterReveal'
+import { FadeIn } from '@/components/Learn/motion/FadeIn'
 
 interface Message { role: 'user' | 'assistant'; content: string }
 
@@ -48,6 +54,7 @@ export default function MentorPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [latestIdx, setLatestIdx] = useState(-1) // index of last new assistant message for character reveal
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -70,15 +77,17 @@ export default function MentorPage() {
             ? `Hey ${learner?.name?.split(' ')[0] || 'there'}! 🌿 I'm Sage, your learning mentor.\n\nYou haven't taken any assessments yet — start with any domain to get your baseline. I'll give you personalised guidance from there!`
             : `Hey ${learner?.name?.split(' ')[0] || 'there'}! 🌿 I'm Sage, your learning mentor.\n\nI've reviewed your scores.${lowestDomain ? ` Your ${lowestDomain.domain.replace(/_/g, ' ')} (${lowestDomain.score} pts) has the most room to grow.` : ''} What do you want to tackle today?`
         }])
+        setLatestIdx(0)
       })
       .catch(() => {
         setMessages([{ role: 'assistant', content: "Hey! 🌿 I'm Sage. Ask me anything about AI, ML, or what to study next." }])
+        setLatestIdx(0)
       })
   }, [status, router])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, loading])
 
   const send = async (text?: string) => {
     const msg = text ?? input.trim()
@@ -102,6 +111,7 @@ export default function MentorPage() {
       const data = await res.json()
       const content = data.content?.[0]?.text ?? data.message ?? 'I had trouble responding. Please try again.'
       setMessages(prev => [...prev, { role: 'assistant', content }])
+      setLatestIdx(newMessages.length) // mark this as the latest for character reveal
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Something went wrong. Please try again.' }])
     } finally {
@@ -121,44 +131,65 @@ export default function MentorPage() {
 
       <div className="px-4 py-2.5 border-b border-white/[0.04] flex-shrink-0">
         <div className="text-[9px] text-white/30 mb-2">Suggested:</div>
-        <div className="flex flex-wrap gap-1.5">
+        <StaggerList stagger={0.05} className="flex flex-wrap gap-1.5">
           {QUICK_PROMPTS.map(p => (
-            <button key={p} onClick={() => send(p)}
-              className="px-2.5 py-1 bg-[#1c1c26] border border-white/[0.07] rounded-full text-[11px] text-white/50 hover:text-white/80 hover:border-[#A78BFA]/30 transition-all">
-              {p}
-            </button>
+            <ScalePress key={p} scale={0.95}>
+              <button onClick={() => send(p)}
+                className="px-2.5 py-1 bg-[#1c1c26] border border-white/[0.07] rounded-full text-[11px] text-white/50 hover:text-white/80 hover:border-[#A78BFA]/30 transition-all">
+                {p}
+              </button>
+            </ScalePress>
           ))}
-        </div>
+        </StaggerList>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3">
-        {messages.map((m, i) => (
-          <div key={i} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-            <div className={`text-[9px] font-bold uppercase tracking-widest mb-1 ${m.role === 'user' ? 'text-[#4F8EF7]' : 'text-[#A78BFA]'}`}>
-              {m.role === 'user' ? 'You' : 'Sage'}
-            </div>
-            <div className={`max-w-[85%] px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed ${
-              m.role === 'user'
-                ? 'bg-[#4F8EF7]/10 border border-[#4F8EF7]/20 text-white/80 rounded-br-sm'
-                : 'bg-[#1c1c26] border border-[#A78BFA]/15 text-white/80 rounded-bl-sm'
-            }`}>
-              {m.content.split('\n').map((line, j) => (
-                <span key={j}>{line}{j < m.content.split('\n').length - 1 && <br />}</span>
-              ))}
-            </div>
-          </div>
-        ))}
-        {loading && (
-          <div className="flex flex-col items-start">
-            <div className="text-[9px] font-bold uppercase tracking-widest text-[#A78BFA] mb-1">Sage</div>
-            <div className="bg-[#1c1c26] border border-[#A78BFA]/15 px-3.5 py-2.5 rounded-xl rounded-bl-sm flex gap-1 items-center">
-              {[0, 1, 2].map(i => (
-                <div key={i} className="w-1.5 h-1.5 rounded-full bg-[#A78BFA]"
-                  style={{ animation: `pulse 1.4s ease-in-out ${i * 0.2}s infinite` }} />
-              ))}
-            </div>
-          </div>
-        )}
+        <AnimatePresence initial={false}>
+          {messages.map((m, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 12, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }}
+              className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}
+            >
+              <div className={`text-[9px] font-bold uppercase tracking-widest mb-1 ${m.role === 'user' ? 'text-[#4F8EF7]' : 'text-[#A78BFA]'}`}>
+                {m.role === 'user' ? 'You' : 'Sage'}
+              </div>
+              <div className={`max-w-[85%] px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed ${
+                m.role === 'user'
+                  ? 'bg-[#4F8EF7]/10 border border-[#4F8EF7]/20 text-white/80 rounded-br-sm'
+                  : 'bg-[#1c1c26] border border-[#A78BFA]/15 text-white/80 rounded-bl-sm'
+              }`}>
+                {m.role === 'assistant' && i === latestIdx ? (
+                  <CharacterReveal text={m.content} speed={25} onComplete={() => setLatestIdx(-1)} />
+                ) : (
+                  m.content.split('\n').map((line, j) => (
+                    <span key={j}>{line}{j < m.content.split('\n').length - 1 && <br />}</span>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+
+        {/* Typing indicator */}
+        <AnimatePresence>
+          {loading && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="flex flex-col items-start"
+            >
+              <div className="text-[9px] font-bold uppercase tracking-widest text-[#A78BFA] mb-1">Sage</div>
+              <div className="bg-[#1c1c26] border border-[#A78BFA]/15 px-3.5 py-2.5 rounded-xl rounded-bl-sm">
+                <TypingIndicator />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div ref={bottomRef} />
       </div>
 
@@ -170,13 +201,13 @@ export default function MentorPage() {
           placeholder="Ask Sage anything…"
           className="flex-1 bg-[#1c1c26] border border-white/[0.08] rounded-full px-4 py-2 text-[12px] text-white/70 outline-none focus:border-[#A78BFA]/40 transition-colors"
         />
-        <button onClick={() => send()} disabled={!input.trim() || loading}
-          className="w-8 h-8 rounded-full bg-[#4F8EF7] disabled:opacity-30 flex items-center justify-center text-[13px] flex-shrink-0 transition-opacity">
-          ↑
-        </button>
+        <ScalePress scale={0.9}>
+          <button onClick={() => send()} disabled={!input.trim() || loading}
+            className="w-8 h-8 rounded-full bg-[#4F8EF7] disabled:opacity-30 flex items-center justify-center text-[13px] flex-shrink-0 transition-opacity">
+            ↑
+          </button>
+        </ScalePress>
       </div>
-
-      <style>{`@keyframes pulse { 0%,80%,100%{opacity:0;transform:scale(0.8)} 40%{opacity:1;transform:scale(1)} }`}</style>
     </div>
   )
 }

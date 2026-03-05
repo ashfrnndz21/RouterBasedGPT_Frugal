@@ -1,10 +1,12 @@
 'use client'
-// src/app/learn/layout.tsx — Learner App shell with NextAuth SessionProvider
+// src/app/learn/layout.tsx — Learner App shell with animated bottom nav
 import { SessionProvider } from 'next-auth/react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { useState, useEffect } from 'react'
 import { Home, BookOpen, Sparkles, User, ArrowLeft } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { ScalePress } from '@/components/Learn/motion/ScalePress'
 
 const NAV = [
   { href: '/learn',         label: 'Home',    Icon: Home },
@@ -52,7 +54,14 @@ function Shell({ children }: { children: React.ReactNode }) {
       )}
 
       <div className={`flex-1 overflow-y-auto ${hideNav ? '' : 'pb-24'}`}>
-        {children}
+        <motion.div
+          key={pathname}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] }}
+        >
+          {children}
+        </motion.div>
       </div>
 
       {!hideNav && (
@@ -62,19 +71,25 @@ function Shell({ children }: { children: React.ReactNode }) {
               {NAV.map(({ href, label, Icon }) => {
                 const active = pathname === href || (href !== '/learn' && pathname.startsWith(href))
                 return (
-                  <Link key={href} href={href} className="flex flex-col items-center gap-1 px-4 py-1.5 rounded-xl transition-all duration-200 relative">
-                    {active && (
-                      <div className="absolute inset-0 rounded-xl bg-[#4F8EF7]/10" />
-                    )}
-                    <Icon
-                      size={20}
-                      className={`relative z-10 transition-colors duration-200 ${active ? 'text-[#4F8EF7]' : 'text-white/25'}`}
-                      strokeWidth={active ? 2.5 : 1.5}
-                    />
-                    <span className={`relative z-10 text-[9px] font-bold tracking-wider uppercase transition-colors duration-200 ${active ? 'text-[#4F8EF7]' : 'text-white/25'}`}>
-                      {label}
-                    </span>
-                  </Link>
+                  <ScalePress key={href} scale={0.92}>
+                    <Link href={href} className="flex flex-col items-center gap-1 px-4 py-1.5 rounded-xl transition-all duration-200 relative">
+                      {active && (
+                        <motion.div
+                          layoutId="nav-active"
+                          className="absolute inset-0 rounded-xl bg-[#4F8EF7]/10"
+                          transition={{ type: 'spring', stiffness: 350, damping: 30 }}
+                        />
+                      )}
+                      <Icon
+                        size={20}
+                        className={`relative z-10 transition-colors duration-200 ${active ? 'text-[#4F8EF7]' : 'text-white/25'}`}
+                        strokeWidth={active ? 2.5 : 1.5}
+                      />
+                      <span className={`relative z-10 text-[9px] font-bold tracking-wider uppercase transition-colors duration-200 ${active ? 'text-[#4F8EF7]' : 'text-white/25'}`}>
+                        {label}
+                      </span>
+                    </Link>
+                  </ScalePress>
                 )
               })}
             </div>
