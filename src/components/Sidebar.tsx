@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { BookOpenText, Home, Search, SquarePen, Settings, BarChart3, Shield, FolderKanban } from 'lucide-react';
+import { BookOpenText, Home, Search, SquarePen, Settings, BarChart3, Shield, FolderKanban, GraduationCap, LayoutDashboard } from 'lucide-react';
 import Link from 'next/link';
 import { useSelectedLayoutSegments } from 'next/navigation';
 import React, { useState, type ReactNode } from 'react';
@@ -23,6 +23,18 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
       href: '/',
       active: segments.length === 0 || segments.includes('c'),
       label: 'Home',
+    },
+    {
+      icon: GraduationCap,
+      href: '/learn',
+      active: segments.includes('learn'),
+      label: 'Learn',
+    },
+    {
+      icon: LayoutDashboard,
+      href: '/studio',
+      active: segments.includes('studio'),
+      label: 'Studio',
     },
     {
       icon: FolderKanban,

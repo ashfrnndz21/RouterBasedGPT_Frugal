@@ -24,6 +24,10 @@ const config: Config = {
   darkMode: 'class',
   theme: {
     extend: {
+      fontFamily: {
+        display: ['"PP Editorial"', 'serif'],
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+      },
       borderColor: ({ colors }) => {
         return {
           light: themeLight(colors),
